@@ -30,9 +30,20 @@ stats and a public set database, and both are big advantages.
   both blocked by the egress proxy — use the raw GitHub host).
 - **No language model in the decision path.** Challenge results showed it trails
   search and degrades under time pressure.
-- **Delivery is a thin in-page overlay + local server.** Overlay reads battle
-  state in the browser and relays protocol lines; all thinking happens locally in
-  Python where the engine lives. Showdex proves the in-page hook works.
+- **Delivery is a static site on GitHub Pages, engine compiled to WebAssembly.**
+  Forced by phone + Pages hosting, and better anyway: nothing to deploy, nothing
+  leaves the device. Measured ~43k positions/sec on mid-range phone hardware,
+  210 KB gzipped. Crucially the ranking doesn't change with the budget, so a
+  phone gets the same answer as a desktop. See `docs/browser-engine.md`.
+- **The assistant watches your battle as a guest spectator.** A static site can't
+  log in to Showdown — the official client posts to a same-origin
+  `/~~showdown/action.php` that Pages has no way to proxy. Spectating needs no
+  account at all, and `/cmd userdetails <name>` finds your live battle from your
+  username, so there's nothing to paste on a phone. All verified against a real
+  server. Trade-off: a spectator doesn't get the `request` feed, so our own
+  hidden set is inferred rather than known, with an optional one-tap confirm for
+  the lead. See `docs/connecting.md`.
+- **Never plays for you.** A spectator connection physically cannot choose a move.
 - **Choice-lock tracking ships with item inference, not after it.** Laplace
   measured a 39% game loss from adding item stats without it.
 - **Set data is a strong prior, never a hard constraint.** The per-role item
@@ -90,6 +101,7 @@ where it gets strong.
 - [x] 2. Repo scaffold + this file
 - [x] 3. Public dashboard → https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
 - [x] 4. Set data layer — exact spreads, stats, formes, role pools (34 tests green)
+- [x] 5a. Delivery architecture settled and verified (browser engine, guest spectator)
 - [ ] 5. State reader (protocol lines → tracked battle state)  ← **current**
 - [ ] 6. Set inference + world sampling (role narrowing, scarf detection, N worlds)
 - [ ] 7. Search layer (MCTS per world, pool, blunder guards, ranked output)
