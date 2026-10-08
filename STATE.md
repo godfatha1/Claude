@@ -35,6 +35,12 @@ stats and a public set database, and both are big advantages.
   Python where the engine lives. Showdex proves the in-page hook works.
 - **Choice-lock tracking ships with item inference, not after it.** Laplace
   measured a 39% game loss from adding item stats without it.
+- **Set data is a strong prior, never a hard constraint.** The per-role item
+  pools we rely on are derived — pkmn ran the generator many times and recorded
+  what came out — so they're only as complete as that sampling. If what we
+  observe contradicts every candidate role, fall back to the species' full pool
+  rather than concluding "impossible". Ruling out the truth is worse than
+  knowing nothing.
 
 ## Environment facts worth not rediscovering
 
@@ -43,6 +49,37 @@ stats and a public set database, and both are big advantages.
   `pip install poke-engine==0.0.48 --no-binary poke-engine`
 - Egress proxy blocks `pkmn.github.io` and `data.pkmn.cc`; `raw.githubusercontent.com` works.
 - Engine state string format confirmed, comma-separated, `=` separates the two sides.
+- The npm `pokemon-showdown` package is a frozen snapshot while our live set data
+  tracks the current ladder, so levels drift between them (11 species differ
+  against 0.11.11). That's expected, not a bug — tests report it instead of
+  failing on it.
+
+## Set data: things that cost time to work out
+
+- **Spreads are nearly fixed but not quite.** 85 EVs / 31 IVs and a neutral
+  nature, except: HP walks down in fours from 85 (to 73 in practice) so Stealth
+  Rock chip divides evenly; Attack is zeroed when nothing in the set reads it;
+  Speed is zeroed for Trick Room and Gyro Ball. All three rules are ported from
+  the simulator and checked against 2,400 of its own generated sets, so every
+  spread and every stat matches exactly.
+- **Speed is therefore exact**, which is what makes turn order evidence rather
+  than a hint.
+- **Cosmetic formes arrive under a forme name.** Gastrodon-East, Minior-Blue,
+  Maushold-Four, Polteageist-Antique, Pikachu-Alola and others are filed under
+  the base species. Look up the exact name first, then the base.
+- **Two formes are decided by the item.** Zacian plus Rusted Sword is
+  Zacian-Crowned: Fairy/Steel instead of Fairy, 148 base Speed instead of 138.
+  Same for Zamazenta. The generator reports the *base* name, so resolving
+  through the item is required or both the type chart and the speed check go
+  wrong. Handled by `dex.battle_forme`.
+- **Six of 509 species reuse a role name** across sets with different movepools.
+  The pkmn data unions them, which makes our pools slightly looser than the
+  simulator's actual sets — the safe direction.
+- **The two data sources have different shapes.** The simulator keys by id with a
+  `sets` list and publishes no items (it picks those at runtime). pkmn keys by
+  display name with a `roles` map and *does* give per-role item pools, derived by
+  sampling. Those item pools are the single most useful thing we have for
+  narrowing a set, which is why we use pkmn's copy.
 
 ## Build order
 
@@ -52,8 +89,8 @@ where it gets strong.
 - [x] 1. Research survey → `docs/research.md`
 - [x] 2. Repo scaffold + this file
 - [x] 3. Public dashboard → https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
-- [ ] 4. Set data layer (randbats fetch/cache, deterministic stat computation)  ← **current**
-- [ ] 5. State reader (protocol lines → tracked battle state)
+- [x] 4. Set data layer — exact spreads, stats, formes, role pools (34 tests green)
+- [ ] 5. State reader (protocol lines → tracked battle state)  ← **current**
 - [ ] 6. Set inference + world sampling (role narrowing, scarf detection, N worlds)
 - [ ] 7. Search layer (MCTS per world, pool, blunder guards, ranked output)
 - [ ] 8. Live overlay in the client

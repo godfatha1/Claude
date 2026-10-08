@@ -1,0 +1,10 @@
+# Search engine. No prebuilt wheel — builds from source, needs Rust.
+# Install with: pip install -r requirements.txt --no-binary poke-engine
+poke-engine==0.0.48
+
+# Brought in for the Showdown data it bundles: gen 9 pokedex (base stats),
+# move data and the type chart, all kept in step with the live simulator.
+poke-env==0.16.1
+
+websockets>=12.0
+aiohttp>=3.9
