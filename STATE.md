@@ -10,6 +10,10 @@ anything. If you're picking this up cold, read this file then `docs/research.md`
   (published private by default — needs sharing turned on from the page's Share menu
    to be reachable without a sign-in)
 
+## House rules
+
+Plain words, short answers, no jargon. See CLAUDE.md.
+
 ## What we're building
 
 A helper that watches a live Gen 9 random battle in the Showdown client and tells
