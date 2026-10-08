@@ -210,8 +210,8 @@ dl.facts dd.ok{color:var(--good)}
 <script>
 // Project state. Updated by republishing this page as the build moves.
 const STATE = {
-  version: "0.1.0",
-  status: { label: "Groundwork done", tone: "live" },
+  version: "0.2.0",
+  status: { label: "Set data layer done", tone: "live" },
   updated: "2026-10-08",
   branch: "claude/pokemon-showdown-assistant-3xna06",
   format: "gen9randombattle",
@@ -229,7 +229,7 @@ const STATE = {
   kpis: [
     { lbl: "Engine throughput", val: "268k", unit: "visits/sec", sub: "single thread, measured" },
     { lbl: "Species covered", val: "509", unit: "", sub: "role-based set data" },
-    { lbl: "Engine build", val: "37", unit: "sec", sub: "from source, no wheel" },
+    { lbl: "Checked against sim", val: "2,400", unit: "sets", sub: "every stat matches" },
     { lbl: "Progress", val: null, unit: "", sub: "steps complete" }
   ],
 
@@ -237,7 +237,8 @@ const STATE = {
     { k: "Search engine", v: "poke-engine 0.0.48", ok: true },
     { k: "Set data", v: "pkmn/randbats", ok: true },
     { k: "Decision method", v: "MCTS over sampled worlds" },
-    { k: "Opponent stats", v: "deterministic" },
+    { k: "Opponent stats", v: "exact", ok: true },
+    { k: "Tests", v: "34 green", ok: true },
     { k: "Language model in the loop", v: "none" },
     { k: "Plays for you", v: "no" }
   ],
@@ -249,9 +250,9 @@ const STATE = {
       why: "Decisions and environment facts written down so nothing gets re-derived after a context reset." },
     { n: "This dashboard", s: "done", tier: "groundwork",
       why: "One public link showing where the build actually is." },
-    { n: "Set data layer", s: "now", tier: "tier 1",
-      why: "Random battle sets are published per species as roles — pick a role and the item, ability, tera type and move pool all narrow with it. Levels and spreads are fixed, so exact stats come straight out of the species." },
-    { n: "Battle state reader", s: "todo", tier: "tier 1",
+    { n: "Set data layer", s: "done", tier: "tier 1",
+      why: "Sets are published per species as roles, so picking a role narrows the item, ability, tera type and move pool together. Spreads turned out to be nearly fixed rather than exactly fixed — HP walks down to make hazard chip divide evenly, Attack and Speed get zeroed in specific cases — so the rules are ported from the simulator and checked against 2,400 of its own generated sets. Every stat matches." },
+    { n: "Battle state reader", s: "now", tier: "tier 1",
       why: "Turn the raw protocol the client already receives into a tracked position: our side fully known, theirs revealed piece by piece." },
     { n: "Set inference and world sampling", s: "todo", tier: "tier 1→2",
       why: "Narrow their likely sets from what's been shown, catch a Choice Scarf from turn order alone, then sample several complete teams that don't contradict anything seen." },
