@@ -8,8 +8,8 @@
 //
 // Each guard here exists because an earlier version got that case wrong.
 import { readFileSync } from 'node:fs';
-import { Dex, toId } from '../../site/app/data.js';
-import { Battle } from '../../site/app/battle.js';
+import { Dex, toId } from '../../app/data.js';
+import { Battle } from '../../app/battle.js';
 
 const dex = new Dex(JSON.parse(readFileSync('data/gen9randombattle.json', 'utf8')));
 

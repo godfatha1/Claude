@@ -1,0 +1,17 @@
+{
+  "name": "randbats-assistant",
+  "private": true,
+  "type": "module",
+  "description": "Live decision helper for Gen 9 random battles. The site itself is static files with no build step; these are test dependencies only.",
+  "scripts": {
+    "test": "scripts/test.sh",
+    "server": "scripts/local_server.sh",
+    "build:data": ".venv/bin/python scripts/build_data.py",
+    "build:engine": "scripts/build_wasm.sh"
+  },
+  "devDependencies": {
+    "playwright": "1.56.1",
+    "pokemon-showdown": "0.11.11",
+    "ws": "8.19.0"
+  }
+}

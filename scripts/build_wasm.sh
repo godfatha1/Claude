@@ -20,7 +20,7 @@ set -euo pipefail
 
 VERSION="0.0.48"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/site/engine"
+OUT="$ROOT/engine"
 WORK="${WASM_BUILD_DIR:-$(mktemp -d)}"
 
 echo "building poke-engine $VERSION for the browser"

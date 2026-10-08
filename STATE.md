@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.1.0
+**Version:** 0.3.0
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-08
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -102,11 +102,11 @@ where it gets strong.
 - [x] 3. Public dashboard → https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
 - [x] 4. Set data layer — exact spreads, stats, formes, role pools (34 tests green)
 - [x] 5a. Delivery architecture settled and verified (browser engine, guest spectator)
-- [ ] 5. State reader (protocol lines → tracked battle state)  ← **current**
-- [ ] 6. Set inference + world sampling (role narrowing, scarf detection, N worlds)
-- [ ] 7. Search layer (MCTS per world, pool, blunder guards, ranked output)
-- [ ] 8. Live overlay in the client
-- [ ] 9. Strength measurement → perceived rating on the dashboard
+- [x] 5. State reader — protocol → tracked position, Choice Scarf proof
+- [x] 6. Set inference and world sampling
+- [x] 7. Search layer — MCTS per world, pooled, blunder guards
+- [x] 8. The page itself — watches your battle, ranked advice with reasons
+- [ ] 9. Strength measurement → perceived rating  ← **current**
 
 ## Perceived rating
 
@@ -114,11 +114,43 @@ Not measured yet. Deliberately blank rather than guessed. Reference points for
 when we do measure: Laplace self-reports a 2231 peak on this exact ladder, and
 the strongest public baselines sit around strong-human level.
 
+## How it's laid out
+
+Everything the browser runs is at the repo root, because Pages serves static
+files from there with no build step:
+
+```
+index.html          the page
+app/                data.js, battle.js, infer.js, advisor.js, engine.js, showdown.js
+engine/             the compiled search engine (committed; rebuild with scripts/build_wasm.sh)
+data/               the set bundle (committed; rebuild with scripts/build_data.py)
+assistant/          the Python layer — now a build-time generator and test oracle
+tests/              python + js, including a full browser run against a live battle
+```
+
+The Python layer is no longer the runtime. Since everything moved into the
+browser it generates `data/` and acts as the reference the JS port is checked
+against — both are verified against the same 2,400 simulator sets.
+
+## Measured
+
+- Engine: ~43k positions/sec on mid-range phone hardware, 243 KB gzipped.
+- Data bundle: 519 species, 954 moves, 56 KB gzipped.
+- A full turn's advice on throttled phone hardware: **4 sampled sets, 48k
+  positions, 600–900 ms.** Comfortably inside a turn.
+- Choice Scarf check: no false claims across 40 real games and 521 turns.
+
 ## Open questions
 
-- Which Showdown client build to target first — the overlay needs to handle both
-  the Backbone and Preact clients eventually.
-- How many sampled worlds before the clock becomes the constraint. Laplace uses 8
-  at 150ms each; we have more headroom per world than that.
-- Unseen bench generation is the known weak point in every randbats bot. No
-  better idea than the standard one yet.
+- **Our own bench is invisible.** A spectator sees our side the way the opponent
+  does. The search fills unseen slots with plausible guesses so the evaluation is
+  sound, and the panel collapses any switch to a guessed teammate into one
+  "Switch out" row rather than naming a Pokémon it can't see. Honest, but a
+  one-tap "this is my lead's set" would make turn-1 advice much sharper.
+- **Unseen bench generation** is the known weak point in every randbats bot, ours
+  included. Sampled uniformly from the roster, which is at least unbiased.
+- **Scarf recall is only lightly measured.** Precision is solid (no false claims
+  in 521 turns) but random-move play rarely creates provable situations. Needs
+  real ladder games.
+- **No damage numbers in the panel yet.** The engine exposes them and it's one of
+  the highest-value Tier 1 items; it just isn't wired to the UI.

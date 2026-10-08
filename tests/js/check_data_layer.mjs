@@ -4,7 +4,7 @@
 // fixture. This runs the JavaScript port over the same 2,400 sets so a mistake
 // in the port shows up here rather than in a battle.
 import { readFileSync } from 'node:fs';
-import { Dex, spreadFor, computeStats, toId } from '../../site/app/data.js';
+import { Dex, spreadFor, computeStats, toId } from '../../app/data.js';
 
 const bundle = JSON.parse(readFileSync('data/gen9randombattle.json', 'utf8'));
 const fixture = JSON.parse(readFileSync('tests/fixtures/simulator_teams.json', 'utf8'));

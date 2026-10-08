@@ -15,8 +15,8 @@
 // Usage:  node tests/js/check_state_reader.mjs [games] [ws://host:port]
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
-import { Dex, toId } from '../../site/app/data.js';
-import { Battle } from '../../site/app/battle.js';
+import { Dex, toId } from '../../app/data.js';
+import { Battle } from '../../app/battle.js';
 
 const GAMES = parseInt(process.argv[2] ?? '12', 10);
 const SERVER = process.argv[3] ?? 'ws://localhost:8111/showdown/websocket';
