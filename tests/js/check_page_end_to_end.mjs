@@ -135,7 +135,7 @@ page.on('pageerror', (err) => consoleErrors.push(String(err)));
 // makes it useless to debug, so record the URL alongside.
 page.on('response', (r) => { if (r.status() >= 400) badResponses.push(`${r.status()} ${r.url()}`); });
 
-const url = `http://localhost:${PORT}/index.html?server=${encodeURIComponent(WS)}`;
+const url = `http://localhost:${PORT}/index.html?nogame=1&server=${encodeURIComponent(WS)}`;
 await page.goto(url);
 
 // 1. Does it start up at all?
@@ -234,10 +234,23 @@ const cost = (await page.textContent('#cost')).trim();
 check('reports what the search cost', /ms/.test(cost), cost);
 console.log(`         ${cost}`);
 
-// 8. Does it survive at phone width without horizontal scroll?
+// 8. Does the detail open over the game, and the game fill the screen?
+await page.click('#bar');
+const sheetShown = await page.evaluate(() =>
+  document.getElementById('sheet').classList.contains('shown'));
+check('tapping the bar opens the detail', sheetShown);
+
 const overflow = await page.evaluate(() =>
   document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('no sideways scrolling at 390px', overflow <= 1, `${overflow}px wider than the screen`);
+
+const frameBox = await page.evaluate(() => {
+  const f = document.getElementById('game').getBoundingClientRect();
+  return { w: Math.round(f.width), h: Math.round(f.height) };
+});
+check('the game gets most of the screen', frameBox.h > 500,
+  `${frameBox.w}x${frameBox.h}`);
+console.log(`         game area: ${frameBox.w}x${frameBox.h}`);
 
 // 9. Clean console?
 check('nothing 404s', badResponses.length === 0, badResponses.slice(0, 3).join(' / '));

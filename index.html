@@ -9,8 +9,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
 <style>
-/* Layout: a fixed ribbon carrying the call, a scrolling body under it, and a
-   sheet that slides up for the detail. Built for a phone held in one hand. */
+/* Layout: Showdown fills the screen, the call sits in a bar on top of it, and
+   the detail slides up over the game when you want it. One page, one tab. */
 :root {
   --bg:#f6f8fb; --surface:#ffffff; --surface-2:#eef2f8; --surface-3:#e3e9f2;
   --border:#d9e1ec; --border-strong:#c2cdde;
@@ -19,7 +19,7 @@
   --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --idle:#98a3b3;
   --display:'Archivo','Helvetica Neue',Arial,sans-serif;
   --data:'IBM Plex Mono',ui-monospace,Menlo,monospace;
-  --r:7px;
+  --r:7px; --bar:0px;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
@@ -28,8 +28,7 @@
     --border:#283240; --border-strong:#374456;
     --fg:#eef2f8; --fg-dim:#97a3b5; --fg-faint:#6c7a8d;
     --accent:#5b8ef5; --accent-soft:#1a2740; --accent-ink:#0b1017;
-    --idle:#5f6b7c;
-    color-scheme: dark;
+    --idle:#5f6b7c; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
@@ -37,144 +36,116 @@
   --border:#283240; --border-strong:#374456;
   --fg:#eef2f8; --fg-dim:#97a3b5; --fg-faint:#6c7a8d;
   --accent:#5b8ef5; --accent-soft:#1a2740; --accent-ink:#0b1017;
-  --idle:#5f6b7c;
-  color-scheme: dark;
+  --idle:#5f6b7c; color-scheme: dark;
 }
 
 *{box-sizing:border-box}
-html,body{height:100%}
+html,body{height:100%;margin:0;overflow:hidden}
 body{
-  margin:0; background:var(--bg); color:var(--fg);
+  background:var(--bg); color:var(--fg);
   font-family:var(--display); font-size:15px; line-height:1.45;
-  -webkit-font-smoothing:antialiased; overscroll-behavior-y:contain;
+  -webkit-font-smoothing:antialiased;
+  display:flex; flex-direction:column;
+  padding-top:env(safe-area-inset-top, 0px);
 }
 .mono{font-family:var(--data);font-variant-numeric:tabular-nums}
 button{font:inherit;color:inherit;cursor:pointer}
-:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 
-/* ---------- ribbon: always visible, carries the call ---------- */
-.ribbon{
-  position:fixed; top:0; left:0; right:0; z-index:30;
-  background:var(--surface); border-bottom:1px solid var(--border);
-  padding:calc(env(safe-area-inset-top, 0px) + 8px) 14px 8px;
+/* ---------- the call bar ---------- */
+.bar{
+  flex:none; background:var(--surface); border-bottom:1px solid var(--border);
+  padding:7px 12px 8px; cursor:pointer; user-select:none; position:relative; z-index:20;
 }
-.rtop{display:flex;align-items:center;gap:8px;min-height:20px}
-.dot{width:8px;height:8px;border-radius:50%;flex:none;background:var(--idle)}
+.bartop{display:flex;align-items:center;gap:7px}
+.dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--idle)}
 .dot.live{background:var(--good)}
 .dot.warn{background:var(--warning)}
 .dot.bad{background:var(--critical)}
-.rstate{font-family:var(--data);font-size:11.5px;color:var(--fg-dim);
-        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
-.rturn{font-family:var(--data);font-size:11.5px;color:var(--fg-faint);white-space:nowrap}
+.barstate{font-family:var(--data);font-size:11px;color:var(--fg-dim);
+          flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.barturn{font-family:var(--data);font-size:11px;color:var(--fg-faint);white-space:nowrap}
+.chev{width:14px;height:14px;flex:none;color:var(--fg-faint);transition:transform .18s ease}
+.open .chev{transform:rotate(180deg)}
 
-.call{display:flex;align-items:baseline;gap:10px;margin-top:7px;min-width:0}
-.callmove{
-  font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1;
-  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+.call{display:flex;align-items:baseline;gap:9px;margin-top:4px;min-width:0}
+.callmove{font-size:21px;font-weight:700;letter-spacing:-.02em;line-height:1.15;
+          min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.callconf{font-family:var(--data);font-size:13px;font-weight:600;color:var(--accent);white-space:nowrap}
+.callwhy{margin-top:2px;font-size:11.5px;color:var(--fg-dim);
+         overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ---------- the game ---------- */
+.stage{flex:1;position:relative;min-height:0;background:var(--bg)}
+iframe{width:100%;height:100%;border:0;display:block;background:#fff}
+.framenote{
+  position:absolute;left:0;right:0;bottom:0;z-index:5;
+  background:var(--surface);border-top:1px solid var(--border);
+  padding:10px 12px calc(env(safe-area-inset-bottom, 0px) + 10px);
+  font-size:12px;color:var(--fg-dim);display:flex;gap:10px;align-items:center;
 }
-.callconf{font-family:var(--data);font-size:14px;font-weight:600;color:var(--accent);white-space:nowrap}
-.callwhy{
-  margin-top:3px;font-size:12.5px;color:var(--fg-dim);
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+.framenote a{color:var(--accent)}
+
+/* ---------- the detail sheet ---------- */
+.sheet{
+  position:absolute;left:0;right:0;top:0;bottom:0;z-index:15;
+  background:var(--bg);overflow-y:auto;overscroll-behavior:contain;
+  padding:12px 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+  transform:translateY(-101%); transition:transform .2s ease; visibility:hidden;
 }
-.callidle{font-size:17px;font-weight:600;color:var(--fg-dim);margin-top:7px}
+.sheet.shown{transform:translateY(0);visibility:visible}
+@media (prefers-reduced-motion:reduce){ .sheet{transition:none} }
 
-/* ---------- body ---------- */
-main{padding:14px;padding-bottom:96px;max-width:620px;margin:0 auto}
-.spacer{height:118px}
-
-section{margin-bottom:16px}
-h2{margin:0 0 8px;font-size:11px;font-weight:600;letter-spacing:.08em;
+section{margin-bottom:13px}
+h2{margin:0 0 6px;font-size:10.5px;font-weight:600;letter-spacing:.08em;
    text-transform:uppercase;color:var(--fg-faint)}
-
 .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
 
-/* ---------- ranked options ---------- */
 ol.opts{list-style:none;margin:0;padding:0}
-ol.opts>li{
-  display:grid;grid-template-columns:1fr auto;gap:4px 12px;align-items:center;
-  padding:11px 13px;border-bottom:1px solid var(--border);
-}
+ol.opts>li{display:grid;grid-template-columns:1fr auto;gap:3px 10px;align-items:center;
+           padding:9px 12px;border-bottom:1px solid var(--border)}
 ol.opts>li:last-child{border-bottom:0}
 ol.opts>li.top{background:var(--accent-soft)}
-ol.opts>li.vetoed{opacity:.6}
-.oname{font-weight:600;font-size:14.5px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-li.vetoed .oname{text-decoration:line-through;text-decoration-thickness:1px}
-.oshare{font-family:var(--data);font-size:13px;font-weight:600;white-space:nowrap}
+ol.opts>li.vetoed{opacity:.55}
+.oname{font-weight:600;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+li.vetoed .oname{text-decoration:line-through}
+.oshare{font-family:var(--data);font-size:12.5px;font-weight:600;white-space:nowrap}
 li.top .oshare{color:var(--accent)}
-.obar{grid-column:1/-1;height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden}
+.obar{grid-column:1/-1;height:3px;background:var(--surface-3);border-radius:2px;overflow:hidden}
 .obar i{display:block;height:100%;background:var(--accent);border-radius:2px}
 li.vetoed .obar i{background:var(--idle)}
-.oswing{grid-column:1/-1;font-family:var(--data);font-size:11px;color:var(--fg-faint)}
-.oveto{grid-column:1/-1;font-size:11.5px;color:var(--critical)}
+.ometa{grid-column:1/-1;font-family:var(--data);font-size:10.5px;color:var(--fg-faint)}
+.oveto{grid-column:1/-1;font-size:11px;color:var(--critical)}
 
-/* ---------- opponent read ---------- */
-dl.read{margin:0;padding:3px 13px 11px}
+.oppheader{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+           padding:10px 12px;border-bottom:1px solid var(--border)}
+.oppname{font-weight:600;font-size:14.5px}
+.opphp{font-family:var(--data);font-size:12.5px;color:var(--fg-dim)}
+dl.read{margin:0;padding:2px 12px 9px}
 dl.read>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
-            padding:7px 0;border-bottom:1px solid var(--border)}
+            padding:6px 0;border-bottom:1px solid var(--border)}
 dl.read>div:last-child{border-bottom:0}
-dl.read dt{color:var(--fg-dim);font-size:13px;flex:none}
-dl.read dd{margin:0;font-family:var(--data);font-size:12.5px;text-align:right;min-width:0;
-           word-break:break-word}
+dl.read dt{color:var(--fg-dim);font-size:12.5px;flex:none}
+dl.read dd{margin:0;font-family:var(--data);font-size:12px;text-align:right;
+           min-width:0;word-break:break-word}
 dd.pinned{color:var(--good);font-weight:600}
 dd.proven{color:var(--warning);font-weight:600}
-.oppheader{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
-           padding:11px 13px;border-bottom:1px solid var(--border)}
-.oppname{font-weight:600;font-size:15px}
-.opphp{font-family:var(--data);font-size:13px;color:var(--fg-dim)}
 
-/* ---------- notes ---------- */
 ul.notes{list-style:none;margin:0;padding:0}
-ul.notes>li{padding:10px 13px;border-bottom:1px solid var(--border);font-size:13px;
-            display:flex;gap:9px;align-items:flex-start}
+ul.notes>li{padding:9px 12px;border-bottom:1px solid var(--border);font-size:12.5px;
+            display:flex;gap:8px;align-items:flex-start}
 ul.notes>li:last-child{border-bottom:0}
-.ntag{font-family:var(--data);font-size:10px;font-weight:600;letter-spacing:.05em;
+.ntag{font-family:var(--data);font-size:9.5px;font-weight:600;letter-spacing:.05em;
       text-transform:uppercase;padding:2px 5px;border-radius:3px;flex:none;margin-top:1px;
       color:var(--warning);border:1px solid color-mix(in srgb,var(--warning) 45%,transparent)}
 
-/* ---------- setup / connect ---------- */
-.setup{padding:14px}
-.setup p{margin:0 0 11px;font-size:13.5px;color:var(--fg-dim)}
-.field{display:flex;gap:8px;flex-wrap:wrap}
-input[type=text]{
-  flex:1;min-width:0;padding:11px 12px;font:inherit;font-size:16px;
-  background:var(--surface-2);color:var(--fg);
-  border:1px solid var(--border-strong);border-radius:var(--r);
-}
-input[type=text]::placeholder{color:var(--fg-faint)}
-.btn{
-  padding:11px 16px;border-radius:var(--r);border:1px solid transparent;
-  background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:14.5px;
-  white-space:nowrap;
-}
-.btn:disabled{opacity:.5;cursor:default}
-.btn.ghost{background:transparent;border-color:var(--border-strong);color:var(--fg)}
-.err{margin-top:10px;font-size:13px;color:var(--critical)}
-
-/* ---------- bottom bar ---------- */
-.bottom{
-  position:fixed;left:0;right:0;bottom:0;z-index:30;
-  background:var(--surface);border-top:1px solid var(--border);
-  padding:8px 14px calc(env(safe-area-inset-bottom, 0px) + 8px);
-  display:flex;gap:8px;align-items:center;
-}
+.sheetfoot{display:flex;gap:8px;align-items:center;margin-top:4px}
 .seg{display:flex;flex:none;border:1px solid var(--border-strong);border-radius:var(--r);overflow:hidden}
-.seg button{
-  padding:8px 11px;background:transparent;border:0;font-family:var(--data);
-  font-size:11.5px;font-weight:500;color:var(--fg-dim);
-}
+.seg button{padding:7px 10px;background:transparent;border:0;font-family:var(--data);
+            font-size:11px;font-weight:500;color:var(--fg-dim)}
 .seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
-/* The readout gives up its space first: the controls either side must stay
-   whole at phone width, and a truncated cost still reads fine. */
-/* The readout gives up its space first: the controls either side must stay
-   whole at phone width, and a truncated cost still reads fine. */
-.cost{font-family:var(--data);font-size:11px;color:var(--fg-faint);
-      flex:1;min-width:0;text-align:center;
-      overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media (max-width:359px){ .cost{display:none} }
-/* Thinking is shown as a mark beside the last real figure, never instead of it.
-   Turns can arrive faster than a search finishes on a phone, and a readout that
-   spends its whole life saying "thinking" tells you nothing. */
+.cost{font-family:var(--data);font-size:10.5px;color:var(--fg-faint);
+      flex:1;min-width:0;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cost[data-thinking="true"]::before{
   content:'';display:inline-block;width:5px;height:5px;border-radius:50%;
   background:var(--accent);margin-right:5px;vertical-align:middle;
@@ -184,20 +155,56 @@ input[type=text]::placeholder{color:var(--fg-faint)}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
 }
 
+/* ---------- first run ---------- */
+.intro{
+  position:absolute;inset:0;z-index:25;background:var(--bg);
+  display:flex;align-items:center;justify-content:center;padding:20px;
+}
+.introbox{max-width:420px;width:100%}
+.introbox h1{margin:0 0 6px;font-size:23px;font-weight:700;letter-spacing:-.02em}
+.introbox p{margin:0 0 14px;font-size:13.5px;color:var(--fg-dim)}
+.field{display:flex;gap:8px}
+input[type=text]{
+  flex:1;min-width:0;padding:11px 12px;font:inherit;font-size:16px;
+  background:var(--surface);color:var(--fg);
+  border:1px solid var(--border-strong);border-radius:var(--r);
+}
+input[type=text]::placeholder{color:var(--fg-faint)}
+.btn{padding:11px 16px;border-radius:var(--r);border:1px solid transparent;
+     background:var(--accent);color:var(--accent-ink);font-weight:600;font-size:14.5px;white-space:nowrap}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.ghost{background:transparent;border-color:var(--border-strong);color:var(--fg)}
+.btn.small{padding:7px 11px;font-size:12.5px}
+.err{margin-top:10px;font-size:13px;color:var(--critical)}
+.hint{margin-top:12px;font-size:12px;color:var(--fg-faint)}
+
 [hidden]{display:none!important}
-@media (min-width:680px){
-  .callmove{font-size:30px}
-  main{padding:18px;padding-bottom:96px}
+
+/* On a wide screen there's room for both at once, so don't hide the game. */
+@media (min-width:900px){
+  .stage{display:flex}
+  iframe{flex:1}
+  .sheet{
+    position:relative;inset:auto;transform:none;visibility:visible;
+    width:370px;flex:none;border-left:1px solid var(--border);
+  }
+  .bar{cursor:default}
+  .chev{display:none}
 }
 </style>
 </head>
 <body>
 
-<div class="ribbon">
-  <div class="rtop">
+<div class="bar" id="bar" role="button" tabindex="0" aria-expanded="false"
+     aria-controls="sheet" aria-label="Show or hide the detail">
+  <div class="bartop">
     <span class="dot" id="dot"></span>
-    <span class="rstate" id="state">starting up</span>
-    <span class="rturn" id="turnLabel"></span>
+    <span class="barstate" id="state">starting up</span>
+    <span class="barturn" id="turnLabel"></span>
+    <svg class="chev" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="2"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
   </div>
   <div id="callBox" hidden>
     <div class="call">
@@ -206,56 +213,67 @@ input[type=text]::placeholder{color:var(--fg-faint)}
     </div>
     <div class="callwhy" id="callWhy"></div>
   </div>
-  <div class="callidle" id="callIdle">not watching a battle yet</div>
 </div>
 
-<div class="spacer" id="spacer"></div>
+<div class="stage">
+  <iframe id="game" title="Pokémon Showdown"
+          src="about:blank"
+          allow="fullscreen"
+          referrerpolicy="no-referrer-when-downgrade"></iframe>
 
-<main>
-  <section id="setupSection">
-    <h2>Watch a battle</h2>
-    <div class="card setup">
-      <p>Type your Showdown name. It'll find your live random battle and watch it —
-         no password, no account, nothing to paste while you play.</p>
+  <div class="framenote" id="frameNote" hidden>
+    <span id="frameNoteText">Showdown didn't load here.</span>
+    <a href="https://play.pokemonshowdown.com/" target="_blank" rel="noopener">Open in a tab</a>
+  </div>
+
+  <div class="sheet" id="sheet">
+    <section id="optsSection" hidden>
+      <h2>What to click</h2>
+      <div class="card"><ol class="opts" id="opts"></ol></div>
+    </section>
+
+    <section id="readSection" hidden>
+      <h2>Their side</h2>
+      <div class="card">
+        <div class="oppheader">
+          <span class="oppname" id="oppName">—</span>
+          <span class="opphp" id="oppHp"></span>
+        </div>
+        <dl class="read" id="oppRead"></dl>
+      </div>
+    </section>
+
+    <section id="notesSection" hidden>
+      <h2>Worth knowing</h2>
+      <div class="card"><ul class="notes" id="notes"></ul></div>
+    </section>
+
+    <div class="sheetfoot">
+      <div class="seg" role="group" aria-label="How hard to think">
+        <button type="button" data-budget="quick" aria-pressed="false">quick</button>
+        <button type="button" data-budget="normal" aria-pressed="true">normal</button>
+        <button type="button" data-budget="deep" aria-pressed="false">deep</button>
+      </div>
+      <span class="cost" id="cost"></span>
+      <button class="btn ghost small" id="stopBtn">Stop</button>
+    </div>
+  </div>
+
+  <div class="intro" id="intro">
+    <div class="introbox">
+      <h1>Randbats Assistant</h1>
+      <p>Play Showdown right here. Type the name you log in with and it'll find
+         your random battle and tell you what to click, turn by turn.</p>
       <div class="field">
         <input type="text" id="nameInput" placeholder="your Showdown name"
                autocomplete="username" autocapitalize="off" spellcheck="false">
-        <button class="btn" id="watchBtn">Watch</button>
+        <button class="btn" id="watchBtn">Start</button>
       </div>
       <div class="err" id="setupErr" hidden></div>
+      <div class="hint">It only watches — it can't make a move for you.
+        Log in and start a battle in the game below, then come back and hit Start.</div>
     </div>
-  </section>
-
-  <section id="optsSection" hidden>
-    <h2>What to click</h2>
-    <div class="card"><ol class="opts" id="opts"></ol></div>
-  </section>
-
-  <section id="readSection" hidden>
-    <h2>Their side</h2>
-    <div class="card">
-      <div class="oppheader">
-        <span class="oppname" id="oppName">—</span>
-        <span class="opphp" id="oppHp"></span>
-      </div>
-      <dl class="read" id="oppRead"></dl>
-    </div>
-  </section>
-
-  <section id="notesSection" hidden>
-    <h2>Worth knowing</h2>
-    <div class="card"><ul class="notes" id="notes"></ul></div>
-  </section>
-</main>
-
-<div class="bottom" id="bottom" hidden>
-  <div class="seg" role="group" aria-label="How hard to think">
-    <button type="button" data-budget="quick" aria-pressed="false">quick</button>
-    <button type="button" data-budget="normal" aria-pressed="true">normal</button>
-    <button type="button" data-budget="deep" aria-pressed="false">deep</button>
   </div>
-  <span class="cost" id="cost"></span>
-  <button class="btn ghost" id="stopBtn">Stop</button>
 </div>
 
 <script type="module">
@@ -269,105 +287,106 @@ import { readOpponent } from './app/infer.js';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 
-const ui = {
-  setState(text, tone = '') {
-    $('state').textContent = text;
-    $('dot').className = `dot ${tone}`;
-  },
-  setError(text) {
-    $('setupErr').textContent = text ?? '';
-    $('setupErr').hidden = !text;
-  },
+const setState = (text, tone = '') => {
+  $('state').textContent = text;
+  $('dot').className = `dot ${tone}`;
+};
+const setError = (text) => {
+  $('setupErr').textContent = text ?? '';
+  $('setupErr').hidden = !text;
 };
 
-// Keep the body clear of the fixed ribbon however tall it gets.
-const sizeSpacer = () => { $('spacer').style.height = `${$('ribbon')?.offsetHeight ?? 118}px`; };
-new ResizeObserver(sizeSpacer).observe(document.querySelector('.ribbon'));
+let dex = null, engine = null, advisor = null;
+let spectator = null, battle = null;
+let budget = 'normal', thinking = false, dirty = false;
 
-let dex = null;
-let engine = null;
-let advisor = null;
-let spectator = null;
-let battle = null;
-let budget = 'normal';
-let thinking = false;
-let dirty = false;
+// ---------------------------------------------------------- the game frame
+
+const SHOWDOWN = 'https://play.pokemonshowdown.com/';
+
+function loadGame() {
+  // Tests run without outbound network; loading the real site there just adds
+  // noise and a frame that can never arrive.
+  if (new URLSearchParams(location.search).get('nogame') === '1') return;
+  const frame = $('game');
+  frame.src = SHOWDOWN;
+  // Nothing tells us a frame was refused — it just sits blank. So if it hasn't
+  // reported loading after a while, offer the way out instead of leaving a
+  // white rectangle with no explanation.
+  let loaded = false;
+  frame.addEventListener('load', () => { loaded = true; }, { once: true });
+  setTimeout(() => {
+    if (!loaded) {
+      $('frameNoteText').textContent = "Showdown won't load inside this page.";
+      $('frameNote').hidden = false;
+    }
+  }, 8000);
+}
+
+// ---------------------------------------------------------------- startup
 
 async function boot() {
-  ui.setState('loading set data and engine', 'warn');
+  loadGame();
+  setState('loading', 'warn');
   try {
     const [loadedDex, loadedEngine] = await Promise.all([
       Dex.load('./data/gen9randombattle.json'),
       Engine.load('./engine/poke_engine_wasm.js'),
     ]);
-    dex = loadedDex;
-    engine = loadedEngine;
+    dex = loadedDex; engine = loadedEngine;
     advisor = new Advisor(dex, engine);
-    ui.setState(`ready — ${Object.keys(dex.species).length} species loaded`, '');
+    setState('ready — log in and start a battle', '');
     $('watchBtn').disabled = false;
   } catch (err) {
-    ui.setState('failed to start', 'bad');
-    ui.setError(`${err.message}. Reload to try again.`);
+    setState('failed to start', 'bad');
+    setError(`${err.message}. Reload to try again.`);
   }
 }
 
 async function startWatching(username) {
-  ui.setError(null);
+  setError(null);
   $('watchBtn').disabled = true;
-
   try {
-    // A ?server= override lets the tests drive the whole page against a local
-    // Showdown server. Without it, the official one.
     const override = new URLSearchParams(location.search).get('server');
     spectator = new Spectator(override ? { server: override } : {});
     spectator.onStatus = ({ state, identity }) => {
-      if (state === 'connecting') ui.setState('connecting to Showdown', 'warn');
-      if (state === 'identified') ui.setState(`connected as ${identity}`, 'live');
-      if (state === 'dropped') ui.setState('connection dropped', 'bad');
+      if (state === 'connecting') setState('connecting', 'warn');
+      if (state === 'identified') setState(`connected as ${identity}`, 'live');
+      if (state === 'dropped') setState('connection dropped', 'bad');
     };
     await spectator.connect();
 
-    ui.setState(`looking for ${username}'s battle`, 'warn');
+    setState(`looking for ${username}'s battle`, 'warn');
     const found = await spectator.findBattles(username);
-    if (!found.online) throw new Error(`${username} doesn't look to be online right now.`);
-    if (!found.battles.length) {
-      throw new Error(`${username} is online but not in a battle. Start one and try again.`);
-    }
+    if (!found.online) throw new Error(`${username} isn't online. Log in below first.`);
+    if (!found.battles.length) throw new Error(`${username} isn't in a battle yet. Start one below, then hit Start.`);
 
     const room = found.battles[0];
     battle = new Battle(dex);
-
     spectator.onLine = (line, lineRoom) => {
       if (lineRoom && lineRoom !== room) return;
       let changed = false;
-      try {
-        changed = battle.handle(line);
-      } catch (err) {
-        console.warn('[battle] could not read a line:', line, err);
-      }
+      try { changed = battle.handle(line); }
+      catch (err) { console.warn('[battle]', line, err); }
       if (line.startsWith('|player|')) battle.setOurName(username);
       if (!changed) return;
       render();
-      // A new turn is the moment the decision actually changes.
       if (line.startsWith('|turn|')) {
-        if (thinking) dirty = true; // catch it when the current search lands
+        if (thinking) dirty = true;
         else think();
       }
     };
 
     await spectator.watch(room);
-    ui.setState(`watching ${room.replace('battle-', '')}`, 'live');
     battle.setOurName(username);
-
-    $('setupSection').hidden = true;
-    $('bottom').hidden = false;
-    $('callIdle').hidden = true;
+    setState(`watching turn by turn`, 'live');
+    $('intro').hidden = true;
     $('callBox').hidden = false;
     render();
     think();
   } catch (err) {
-    ui.setState('not watching', 'bad');
-    ui.setError(err.message);
+    setState('not watching', 'bad');
+    setError(err.message);
     $('watchBtn').disabled = false;
     spectator?.close();
     spectator = null;
@@ -376,26 +395,24 @@ async function startWatching(username) {
 
 function stopWatching() {
   spectator?.close();
-  spectator = null;
-  battle = null;
-  $('setupSection').hidden = false;
-  $('bottom').hidden = true;
+  spectator = null; battle = null;
+  $('intro').hidden = false;
+  $('callBox').hidden = true;
   $('optsSection').hidden = true;
   $('readSection').hidden = true;
   $('notesSection').hidden = true;
-  $('callBox').hidden = true;
-  $('callIdle').hidden = false;
   $('watchBtn').disabled = false;
-  ui.setState('stopped', '');
+  closeSheet();
+  setState('stopped', '');
 }
 
-/** Search the current position and show the result. */
+// ----------------------------------------------------------------- advice
+
 function think() {
   if (!battle || !advisor || thinking) return;
   if (battle.ended) {
     $('callMove').textContent = battle.winner ? `${battle.winner} won` : 'battle over';
-    $('callConf').textContent = '';
-    $('callWhy').textContent = '';
+    $('callConf').textContent = ''; $('callWhy').textContent = '';
     return;
   }
   if (!battle.us.active || !battle.them.active) return;
@@ -404,7 +421,6 @@ function think() {
   $('cost').dataset.thinking = 'true';
   if (!$('cost').textContent.trim()) $('cost').textContent = 'thinking…';
 
-  // Yield first so the ribbon repaints before the search blocks the thread.
   setTimeout(() => {
     try {
       const result = advisor.advise(battle, { budget });
@@ -415,23 +431,28 @@ function think() {
     } finally {
       thinking = false;
       $('cost').dataset.thinking = 'false';
-      // A turn that landed mid-search left the position newer than the advice
-      // we just produced. Searching again is the whole point of noticing.
       if (dirty) { dirty = false; think(); }
     }
   }, 0);
 }
 
+function prettyChoice(choice, action = null) {
+  if (action?.unnamedSwitch) return 'Switch out';
+  if (choice.startsWith('switch ')) {
+    const name = choice.slice(7);
+    return `Switch to ${dex.get(name)?.n ?? name}`;
+  }
+  return dex.move(choice)?.name ?? choice;
+}
+
 function showAdvice(result) {
   const playable = result.actions.filter((a) => !a.vetoed);
   const best = playable[0] ?? result.actions[0];
-
   if (best) {
     $('callMove').textContent = prettyChoice(best.choice, best);
     $('callConf').textContent = `${Math.round(best.share * 100)}%`;
     $('callWhy').textContent = advisor.explain(best, result, battle);
   }
-
   $('cost').textContent =
     `${result.worlds} sets · ${(result.positions / 1000).toFixed(0)}k · ${result.elapsedMs}ms`;
 
@@ -445,21 +466,11 @@ function showAdvice(result) {
       ${action.vetoed
         ? `<span class="oveto">${esc(action.vetoed)}</span>`
         : swing > 0.2
-          ? `<span class="oswing">${Math.round(action.worstValue * 100)}–${Math.round(action.bestValue * 100)}% depending on their set</span>`
+          ? `<span class="ometa">${Math.round(action.worstValue * 100)}–${Math.round(action.bestValue * 100)}% depending on their set</span>`
           : ''}
     </li>`;
   }).join('');
   $('optsSection').hidden = false;
-}
-
-function prettyChoice(choice, action = null) {
-  if (action?.unnamedSwitch) return 'Switch out';
-  if (choice.startsWith('switch ')) {
-    const name = choice.slice(7);
-    const data = dex.get(name);
-    return `Switch to ${data?.n ?? name}`;
-  }
-  return dex.move(choice)?.name ?? choice;
 }
 
 function render() {
@@ -475,15 +486,13 @@ function render() {
       ['Speed', read.speed ?? 'unknown', read.scarfProven ? 'proven' : ''],
       ['Item', read.scarfProven ? 'Choice Scarf (proven)'
                : read.item ? read.item
-               : read.possibleItems.length ? read.possibleItems.join(', ')
-               : 'unknown',
+               : read.possibleItems.join(', ') || 'unknown',
         read.scarfProven ? 'proven' : ''],
       ['Moves seen', read.revealed.map((m) => dex.move(m)?.name ?? m).join(', ') || 'none yet', ''],
       ['Might also have', read.unseenMoves.slice(0, 6).map((m) => dex.move(m)?.name ?? m).join(', ') || '—', ''],
     ];
     $('oppRead').innerHTML = rows
-      .map(([k, v, cls]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`)
-      .join('');
+      .map(([k, v, cls]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`).join('');
     $('readSection').hidden = false;
   }
 
@@ -495,22 +504,47 @@ function render() {
   }
 }
 
+// ------------------------------------------------------------- the sheet
+
+const wideEnoughForBoth = () => window.matchMedia('(min-width: 900px)').matches;
+
+function toggleSheet() {
+  if (wideEnoughForBoth()) return; // it's always on screen there
+  const showing = $('sheet').classList.toggle('shown');
+  // Always open at the top, so the best option is the first thing you see.
+  if (showing) $('sheet').scrollTop = 0;
+  $('bar').classList.toggle('open', showing);
+  $('bar').setAttribute('aria-expanded', String(showing));
+}
+function closeSheet() {
+  $('sheet').classList.remove('shown');
+  $('bar').classList.remove('open');
+  $('bar').setAttribute('aria-expanded', 'false');
+}
+
+$('bar').addEventListener('click', toggleSheet);
+$('bar').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSheet(); }
+});
+
 // ---------------------------------------------------------------- wiring
 
 $('watchBtn').disabled = true;
 $('watchBtn').addEventListener('click', () => {
   const name = $('nameInput').value.trim();
-  if (!name) { ui.setError('Type the name you use on Showdown.'); return; }
+  if (!name) { setError('Type the name you log in with.'); return; }
   try { localStorage.setItem('randbats.name', name); } catch { /* private window */ }
   startWatching(name);
 });
 $('nameInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('watchBtn').click();
 });
-$('stopBtn').addEventListener('click', stopWatching);
+$('stopBtn').addEventListener('click', (e) => { e.stopPropagation(); stopWatching(); });
+$('sheet').addEventListener('click', (e) => e.stopPropagation());
 
 for (const button of document.querySelectorAll('.seg button')) {
-  button.addEventListener('click', () => {
+  button.addEventListener('click', (e) => {
+    e.stopPropagation();
     budget = button.dataset.budget;
     for (const other of document.querySelectorAll('.seg button')) {
       other.setAttribute('aria-pressed', String(other === button));
@@ -524,7 +558,6 @@ try {
   if (saved) $('nameInput').value = saved;
 } catch { /* private window */ }
 
-sizeSpacer();
 boot();
 </script>
 </body>
