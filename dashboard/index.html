@@ -1,0 +1,337 @@
+<title>Randbats Assistant</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: instrument panel — identity bar, KPI row, then checklist beside a rating/facts rail. */
+:root {
+  --bg:#f6f8fb; --surface:#ffffff; --surface-2:#eef2f8; --surface-3:#e3e9f2;
+  --border:#d9e1ec; --border-strong:#c2cdde;
+  --fg:#111620; --fg-dim:#596578; --fg-faint:#8b97a8;
+  --accent:#2a5fd6; --accent-soft:#e7eefc;
+  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --idle:#98a3b3;
+  --display:'Archivo','Helvetica Neue',Arial,sans-serif;
+  --body:'Archivo','Helvetica Neue',Arial,sans-serif;
+  --data:'IBM Plex Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
+  --r:6px; --shadow:0 1px 2px rgba(17,22,32,.06), 0 1px 1px rgba(17,22,32,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#0e1218; --surface:#161c25; --surface-2:#1c242f; --surface-3:#232d3a;
+    --border:#283240; --border-strong:#374456;
+    --fg:#eef2f8; --fg-dim:#97a3b5; --fg-faint:#6c7a8d;
+    --accent:#5b8ef5; --accent-soft:#1a2740;
+    --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --idle:#5f6b7c;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#0e1218; --surface:#161c25; --surface-2:#1c242f; --surface-3:#232d3a;
+  --border:#283240; --border-strong:#374456;
+  --fg:#eef2f8; --fg-dim:#97a3b5; --fg-faint:#6c7a8d;
+  --accent:#5b8ef5; --accent-soft:#1a2740;
+  --good:#0ca30c; --warning:#fab219; --critical:#d03b3b; --idle:#5f6b7c;
+  --shadow:0 1px 2px rgba(0,0,0,.4);
+  color-scheme: dark;
+}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1140px;margin:0 auto;padding-inline:16px;padding-block:28px 56px}
+h1,h2,h3{margin:0;font-family:var(--display);text-wrap:balance}
+.mono{font-family:var(--data);font-variant-numeric:tabular-nums}
+
+/* ---- identity bar ---- */
+.top{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;
+     padding-bottom:18px;border-bottom:1px solid var(--border)}
+.brand h1{font-size:25px;font-weight:700;letter-spacing:-.02em}
+.brand p{margin:5px 0 0;color:var(--fg-dim);max-width:62ch;font-size:13.5px}
+.topmeta{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:var(--r);
+      border:1px solid var(--border);background:var(--surface);font-family:var(--data);
+      font-size:12px;font-weight:500;white-space:nowrap}
+.chip b{font-weight:600}
+.chip .k{color:var(--fg-faint);font-weight:400}
+.dot{width:7px;height:7px;border-radius:50%;flex:none}
+.dot.live{background:var(--good);box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 22%,transparent)}
+@media (prefers-reduced-motion:no-preference){
+  .dot.live{animation:pulse 2.6s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+}
+
+/* ---- KPI row ---- */
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:20px}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+     padding:13px 14px;min-width:0;box-shadow:var(--shadow)}
+.kpi .lbl{font-size:10.5px;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--fg-faint)}
+.kpi .val{font-family:var(--data);font-size:25px;font-weight:600;letter-spacing:-.02em;
+          margin-top:5px;line-height:1.1;font-variant-numeric:tabular-nums}
+.kpi .sub{font-size:12px;color:var(--fg-dim);margin-top:3px}
+.kpi .val small{font-size:14px;font-weight:500;color:var(--fg-dim);letter-spacing:0}
+
+/* ---- segmented progress meter ---- */
+.meter{display:flex;gap:2px;margin-top:9px}
+.meter i{height:5px;flex:1;background:var(--surface-3);border-radius:1px}
+.meter i:first-child{border-radius:4px 1px 1px 4px}
+.meter i:last-child{border-radius:1px 4px 4px 1px}
+.meter i.done{background:var(--good)}
+.meter i.now{background:var(--accent)}
+
+/* ---- body grid ---- */
+.cols{display:grid;grid-template-columns:minmax(0,1.62fr) minmax(0,1fr);gap:22px;margin-top:26px;align-items:start}
+section.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);
+              box-shadow:var(--shadow);min-width:0}
+.phead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+       padding:13px 16px;border-bottom:1px solid var(--border)}
+.phead h2{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.phead .note{font-size:12px;color:var(--fg-faint);font-family:var(--data)}
+
+/* ---- checklist ---- */
+ol.steps{list-style:none;margin:0;padding:0}
+ol.steps>li{display:grid;grid-template-columns:30px 1fr;gap:12px;padding:12px 16px;
+            border-bottom:1px solid var(--border);min-width:0}
+ol.steps>li:last-child{border-bottom:0}
+ol.steps>li.now{background:var(--accent-soft)}
+.mark{font-family:var(--data);font-size:11px;font-weight:600;color:var(--fg-faint);
+      padding-top:2px;text-align:right}
+li.now .mark{color:var(--accent)}
+.sbody{min-width:0}
+.srow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sname{font-weight:600;font-size:13.5px;letter-spacing:-.005em}
+li.done .sname{color:var(--fg-dim)}
+.why{margin:4px 0 0;font-size:12.5px;color:var(--fg-dim);max-width:64ch}
+.tier{font-family:var(--data);font-size:10.5px;font-weight:500;color:var(--fg-faint);
+      border:1px solid var(--border-strong);border-radius:3px;padding:1px 5px;white-space:nowrap}
+
+/* ---- status pills: icon + label, never colour alone ---- */
+.pill{display:inline-flex;align-items:center;gap:5px;font-family:var(--data);font-size:10.5px;
+      font-weight:600;letter-spacing:.04em;text-transform:uppercase;padding:2px 7px 2px 5px;
+      border-radius:3px;white-space:nowrap;border:1px solid}
+.pill svg{width:11px;height:11px;flex:none}
+.pill.done{color:var(--good);border-color:color-mix(in srgb,var(--good) 40%,transparent);
+           background:color-mix(in srgb,var(--good) 10%,transparent)}
+.pill.now{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,transparent);
+          background:var(--surface)}
+.pill.todo{color:var(--fg-faint);border-color:var(--border-strong);background:transparent}
+
+/* ---- rating card ---- */
+.rating{padding:16px}
+.rating .empty{border:1px dashed var(--border-strong);border-radius:var(--r);
+               padding:18px 14px;text-align:center;background:var(--surface-2)}
+.rating .empty .big{font-family:var(--data);font-size:30px;font-weight:600;color:var(--fg-faint);letter-spacing:-.02em}
+.rating .empty p{margin:6px 0 0;font-size:12.5px;color:var(--fg-dim)}
+.refs{margin:14px 0 0;padding:0;list-style:none;display:flex;flex-direction:column;gap:0}
+.refs li{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+         padding:7px 0;border-top:1px solid var(--border);font-size:12.5px}
+.refs li:first-child{border-top:0}
+.refs .who{color:var(--fg-dim);min-width:0}
+.refs .num{font-family:var(--data);font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums}
+
+/* ---- fact list ---- */
+dl.facts{margin:0;padding:4px 16px 14px}
+dl.facts>div{display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+             padding:8px 0;border-bottom:1px solid var(--border)}
+dl.facts>div:last-child{border-bottom:0}
+dl.facts dt{color:var(--fg-dim);font-size:12.5px;min-width:0}
+dl.facts dd{margin:0;font-family:var(--data);font-size:12.5px;font-weight:500;
+            text-align:right;white-space:nowrap}
+dl.facts dd.ok{color:var(--good)}
+
+.foot{margin-top:24px;padding-top:14px;border-top:1px solid var(--border);
+      display:flex;flex-wrap:wrap;gap:6px 18px;justify-content:space-between;
+      font-size:12px;color:var(--fg-faint);font-family:var(--data)}
+.foot a{color:var(--accent);text-decoration:none}
+.foot a:hover{text-decoration:underline}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:3px}
+
+@media (max-width:860px){
+  .cols{grid-template-columns:1fr}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:460px){
+  .brand h1{font-size:21px}
+  .kpi .val{font-size:21px}
+  ol.steps>li{grid-template-columns:22px 1fr;gap:9px;padding:11px 13px}
+}
+</style>
+
+<div class="wrap">
+
+  <div class="top">
+    <div class="brand">
+      <h1>Randbats Assistant</h1>
+      <p>A live decision helper for Gen 9 random battles on Pokémon Showdown. It
+         watches the battle you're already playing, works out what the other side is
+         likely holding, searches the position, and tells you what to click — and why.
+         It advises; it never plays for you.</p>
+    </div>
+    <div class="topmeta" id="topmeta"></div>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="cols">
+
+    <section class="panel">
+      <div class="phead">
+        <h2>Build order</h2>
+        <span class="note" id="stepcount"></span>
+      </div>
+      <ol class="steps" id="steps"></ol>
+    </section>
+
+    <div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+
+      <section class="panel">
+        <div class="phead">
+          <h2>Perceived rating</h2>
+          <span class="note">gen9randombattle</span>
+        </div>
+        <div class="rating" id="rating"></div>
+      </section>
+
+      <section class="panel">
+        <div class="phead">
+          <h2>Groundwork</h2>
+          <span class="note">verified on this box</span>
+        </div>
+        <dl class="facts" id="facts"></dl>
+      </section>
+
+    </div>
+  </div>
+
+  <div class="foot">
+    <span id="footleft"></span>
+    <span id="footright"></span>
+  </div>
+</div>
+
+<script>
+// Project state. Updated by republishing this page as the build moves.
+const STATE = {
+  version: "0.1.0",
+  status: { label: "Groundwork done", tone: "live" },
+  updated: "2026-10-08",
+  branch: "claude/pokemon-showdown-assistant-3xna06",
+  format: "gen9randombattle",
+
+  rating: {
+    measured: false,
+    note: "Nothing measured yet. This stays blank rather than guessed — it gets filled in once the search layer plays real games.",
+    refs: [
+      { who: "Laplace, peak (self-reported)", num: "2231" },
+      { who: "Strong public baselines", num: "~strong human" },
+      { who: "Ladder convention", num: "Elo + GXE" }
+    ]
+  },
+
+  kpis: [
+    { lbl: "Engine throughput", val: "268k", unit: "visits/sec", sub: "single thread, measured" },
+    { lbl: "Species covered", val: "509", unit: "", sub: "role-based set data" },
+    { lbl: "Engine build", val: "37", unit: "sec", sub: "from source, no wheel" },
+    { lbl: "Progress", val: null, unit: "", sub: "steps complete" }
+  ],
+
+  facts: [
+    { k: "Search engine", v: "poke-engine 0.0.48", ok: true },
+    { k: "Set data", v: "pkmn/randbats", ok: true },
+    { k: "Decision method", v: "MCTS over sampled worlds" },
+    { k: "Opponent stats", v: "deterministic" },
+    { k: "Language model in the loop", v: "none" },
+    { k: "Plays for you", v: "no" }
+  ],
+
+  steps: [
+    { n: "Research survey", s: "done", tier: "groundwork",
+      why: "Checked every public bot, overlay and advisor. Search beats learned policies here right now — Foul Play won the Gen 9 bracket at the PokéAgent Challenge 50–14 against the reinforcement-learning entries." },
+    { n: "Repo scaffold and session notes", s: "done", tier: "groundwork",
+      why: "Decisions and environment facts written down so nothing gets re-derived after a context reset." },
+    { n: "This dashboard", s: "done", tier: "groundwork",
+      why: "One public link showing where the build actually is." },
+    { n: "Set data layer", s: "now", tier: "tier 1",
+      why: "Random battle sets are published per species as roles — pick a role and the item, ability, tera type and move pool all narrow with it. Levels and spreads are fixed, so exact stats come straight out of the species." },
+    { n: "Battle state reader", s: "todo", tier: "tier 1",
+      why: "Turn the raw protocol the client already receives into a tracked position: our side fully known, theirs revealed piece by piece." },
+    { n: "Set inference and world sampling", s: "todo", tier: "tier 1→2",
+      why: "Narrow their likely sets from what's been shown, catch a Choice Scarf from turn order alone, then sample several complete teams that don't contradict anything seen." },
+    { n: "Search layer", s: "todo", tier: "tier 1→2",
+      why: "Search each sampled world, pool the rankings into one answer, and veto the obvious blunders — clicking into an immunity, a status move on your last Pokémon." },
+    { n: "Live overlay", s: "todo", tier: "tier 1",
+      why: "The part you actually see: ranked moves with damage numbers and a reason, drawn inside the battle you're playing." },
+    { n: "Strength measurement", s: "todo", tier: "tier 3",
+      why: "Play real games, record the rating, and check every later change head-to-head before believing it helped." }
+  ]
+};
+
+/* ---------- render ---------- */
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+const ICON = {
+  done: '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.2 6.3l2.4 2.4 5-5.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  now:  '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="3.1" fill="currentColor"/><circle cx="6" cy="6" r="5.1" stroke="currentColor" stroke-width="1.3" opacity=".45"/></svg>',
+  todo: '<svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.3" stroke="currentColor" stroke-width="1.4" stroke-dasharray="2.2 2"/></svg>'
+};
+const WORD = { done: "done", now: "in progress", todo: "queued" };
+
+const done = STATE.steps.filter(s => s.s === "done").length;
+const total = STATE.steps.length;
+const current = STATE.steps.find(s => s.s === "now");
+
+// identity bar
+$("topmeta").innerHTML = [
+  `<span class="chip"><span class="dot live"></span><b>${esc(STATE.status.label)}</b></span>`,
+  `<span class="chip"><span class="k">version</span><b>${esc(STATE.version)}</b></span>`,
+  `<span class="chip"><span class="k">format</span><b>${esc(STATE.format)}</b></span>`
+].join("");
+
+// KPI row — the last tile is the progress meter
+$("kpis").innerHTML = STATE.kpis.map(k => {
+  if (k.val === null) {
+    const seg = STATE.steps.map(s =>
+      `<i class="${s.s === 'done' ? 'done' : s.s === 'now' ? 'now' : ''}"></i>`).join("");
+    return `<div class="kpi"><div class="lbl">${esc(k.lbl)}</div>
+      <div class="val">${done}<small> / ${total}</small></div>
+      <div class="meter" role="img" aria-label="${done} of ${total} steps complete">${seg}</div></div>`;
+  }
+  return `<div class="kpi"><div class="lbl">${esc(k.lbl)}</div>
+    <div class="val">${esc(k.val)}${k.unit ? `<small> ${esc(k.unit)}</small>` : ""}</div>
+    <div class="sub">${esc(k.sub)}</div></div>`;
+}).join("");
+
+// checklist
+$("stepcount").textContent = `${done} of ${total} complete`;
+$("steps").innerHTML = STATE.steps.map((s, i) => `
+  <li class="${s.s}">
+    <div class="mark">${String(i + 1).padStart(2, "0")}</div>
+    <div class="sbody">
+      <div class="srow">
+        <span class="sname">${esc(s.n)}</span>
+        <span class="pill ${s.s}">${ICON[s.s]}${WORD[s.s]}</span>
+        <span class="tier">${esc(s.tier)}</span>
+      </div>
+      <p class="why">${esc(s.why)}</p>
+    </div>
+  </li>`).join("");
+
+// rating
+const r = STATE.rating;
+$("rating").innerHTML = (r.measured
+  ? `<div style="text-align:center"><div class="val mono" style="font-size:38px;font-weight:600">${esc(r.elo)}</div>
+     <p style="margin:4px 0 0;font-size:12.5px;color:var(--fg-dim)">${esc(r.note)}</p></div>`
+  : `<div class="empty"><div class="big">—</div><p>${esc(r.note)}</p></div>`)
+  + `<ul class="refs">` + r.refs.map(x =>
+      `<li><span class="who">${esc(x.who)}</span><span class="num">${esc(x.num)}</span></li>`).join("")
+  + `</ul>`;
+
+// groundwork facts
+$("facts").innerHTML = STATE.facts.map(f =>
+  `<div><dt>${esc(f.k)}</dt><dd class="${f.ok ? "ok" : ""}">${esc(f.v)}</dd></div>`).join("");
+
+// footer
+$("footleft").innerHTML = current
+  ? `now building &rarr; ${esc(current.n)}`
+  : `all steps complete`;
+$("footright").textContent = `updated ${STATE.updated}`;
+</script>
