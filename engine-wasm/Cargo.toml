@@ -1,0 +1,21 @@
+[package]
+name = "poke-engine-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pinned, and patched for the browser by scripts/build_wasm.sh — see that
+# script for why the patches are needed.
+poke-engine = { version = "=0.0.48", default-features = false, features = ["gen9"] }
+wasm-bindgen = "0.2.100"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"

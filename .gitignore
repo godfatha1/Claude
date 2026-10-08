@@ -9,3 +9,8 @@ venv/
 assistant/data/cache/
 *.log
 replays/
+
+# wasm build scratch
+engine-wasm/target/
+site/engine/*.wasm
+site/engine/*.js
