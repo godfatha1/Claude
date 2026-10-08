@@ -2,17 +2,20 @@
 # Build the search engine for the browser.
 #
 # The whole point: the engine runs on the phone, so a battle never leaves the
-# device and there's no server to deploy or keep running. The site can then be
-# plain static files.
+# device and there's no server to deploy or keep running. The site is then just
+# static files.
 #
-# Two things in the upstream engine don't work in a browser and get patched here
-# rather than forked, so updating the pinned version stays a one-line change:
+# Two things in the upstream engine don't work in a browser. Both are patched
+# here against a pinned version rather than kept as a fork, so updating stays a
+# one-line change:
 #
 #   1. `rand` pulls in getrandom, which refuses to build for the browser unless
-#      you pick its browser backend explicitly — both a feature and a cfg flag.
-#   2. The search loop calls `std::time::Instant::now()`, which compiles for the
-#      browser but panics the moment it runs. `web-time` is a drop-in
-#      replacement that reads the page's clock instead.
+#      you pick its browser backend explicitly — and it wants both a feature and
+#      a cfg flag, which is easy to half-do.
+#   2. The search loop calls `std::time::Instant::now()` unconditionally, even
+#      when the search is capped by iteration count. That *compiles* for the
+#      browser and then panics the moment it runs, which is the worst way for it
+#      to fail. `web-time` is a drop-in replacement that reads the page's clock.
 set -euo pipefail
 
 VERSION="0.0.48"
@@ -23,6 +26,7 @@ WORK="${WASM_BUILD_DIR:-$(mktemp -d)}"
 echo "building poke-engine $VERSION for the browser"
 rustup target add wasm32-unknown-unknown >/dev/null
 
+mkdir -p "$WORK"
 cd "$WORK"
 if [ ! -d poke-engine ]; then
   git clone --depth 1 --branch "v$VERSION" https://github.com/pmariglia/poke-engine.git 2>/dev/null \
@@ -30,58 +34,19 @@ if [ ! -d poke-engine ]; then
 fi
 cd poke-engine
 
-# --- patch 1: a random source that works in a browser, and a clock that does too
-python3 - <<'PY'
-import pathlib
-p = pathlib.Path("Cargo.toml")
-s = p.read_text()
-if "wasm_js" not in s:
-    s = s.replace(
-        '[features]',
-        '[target.\'cfg(target_arch = "wasm32")\'.dependencies]\n'
-        'getrandom = { version = "0.3", features = ["wasm_js"] }\n'
-        'web-time = "1.1.0"\n\n'
-        '[features]',
-        1,
-    )
-# Debug info makes the artifact ten times larger for no benefit in a browser.
-s = s.replace("[profile.release]\ndebug = 1", "[profile.release]\ndebug = 0\nstrip = true")
-p.write_text(s)
+# Clear any previous copy of our wrapper first. A leftover directory declaring
+# the same package name gets picked instead and the build silently uses stale
+# source, which looks like your edits did nothing.
+rm -rf engine-wasm poke-engine-wasm
+cp -r "$ROOT/engine-wasm" engine-wasm
 
-m = pathlib.Path("src/mcts.rs")
-t = m.read_text()
-needle = "    let start_time = std::time::Instant::now();"
-if needle in t:
-    t = t.replace(needle,
-        '    #[cfg(target_arch = "wasm32")]\n'
-        '    let start_time = web_time::Instant::now();\n'
-        '    #[cfg(not(target_arch = "wasm32"))]\n'
-        '    let start_time = std::time::Instant::now();')
-    m.write_text(t)
-print("patched for the browser")
-PY
-
-# --- our wrapper, built against the patched engine
-rm -rf engine-wasm && cp -r "$ROOT/engine-wasm" engine-wasm
-python3 - <<'PY'
-import pathlib, re
-p = pathlib.Path("engine-wasm/Cargo.toml")
-s = p.read_text()
-s = re.sub(r'poke-engine = \{ version = "=[^"]+"', 'poke-engine = { path = ".."', s)
-p.write_text(s)
-
-w = pathlib.Path("Cargo.toml")
-s = w.read_text()
-if "engine-wasm" not in s:
-    s = s.replace('members = [\n    "poke-engine-py"\n]', 'members = [\n    "poke-engine-py",\n    "engine-wasm"\n]')
-    w.write_text(s)
-PY
+python3 "$ROOT/scripts/patch_engine_for_browser.py"
 
 RUSTFLAGS='--cfg getrandom_backend="wasm_js"' \
   cargo build --release -p poke-engine-wasm --target wasm32-unknown-unknown
 
-# --- bindings. The CLI version must match the crate's exactly, so read it off
-#     the lockfile rather than pinning a guess that drifts.
+# Bindings. The CLI version has to match the crate's exactly, so read it off the
+# lockfile rather than pinning a guess that drifts.
 BG_VERSION="$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | head -1 | cut -d'"' -f2)"
 echo "wasm-bindgen $BG_VERSION"
 BG_DIR="$WORK/wasm-bindgen-$BG_VERSION-x86_64-unknown-linux-musl"
