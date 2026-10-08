@@ -210,8 +210,8 @@ dl.facts dd.ok{color:var(--good)}
 <script>
 // Project state. Updated by republishing this page as the build moves.
 const STATE = {
-  version: "0.2.0",
-  status: { label: "Set data layer done", tone: "live" },
+  version: "0.3.0",
+  status: { label: "Working end to end", tone: "live" },
   updated: "2026-10-08",
   branch: "claude/pokemon-showdown-assistant-3xna06",
   format: "gen9randombattle",
@@ -227,20 +227,21 @@ const STATE = {
   },
 
   kpis: [
-    { lbl: "Engine throughput", val: "268k", unit: "visits/sec", sub: "single thread, measured" },
-    { lbl: "Species covered", val: "509", unit: "", sub: "role-based set data" },
+    { lbl: "Advice per turn", val: "600–900", unit: "ms", sub: "on phone-speed hardware" },
+    { lbl: "Download", val: "299", unit: "KB", sub: "engine + set data, gzipped" },
     { lbl: "Checked against sim", val: "2,400", unit: "sets", sub: "every stat matches" },
     { lbl: "Progress", val: null, unit: "", sub: "steps complete" }
   ],
 
   facts: [
-    { k: "Search engine", v: "poke-engine 0.0.48", ok: true },
-    { k: "Set data", v: "pkmn/randbats", ok: true },
-    { k: "Decision method", v: "MCTS over sampled worlds" },
+    { k: "Runs on", v: "your phone", ok: true },
+    { k: "Search engine", v: "poke-engine, WebAssembly", ok: true },
+    { k: "Decision method", v: "search over 4 sampled sets" },
     { k: "Opponent stats", v: "exact", ok: true },
-    { k: "Tests", v: "34 green", ok: true },
+    { k: "Needs a login", v: "no", ok: true },
+    { k: "Can play for you", v: "no — it only watches", ok: true },
     { k: "Language model in the loop", v: "none" },
-    { k: "Plays for you", v: "no" }
+    { k: "Anything leaves your device", v: "no", ok: true }
   ],
 
   steps: [
@@ -252,15 +253,15 @@ const STATE = {
       why: "One public link showing where the build actually is." },
     { n: "Set data layer", s: "done", tier: "tier 1",
       why: "Sets are published per species as roles, so picking a role narrows the item, ability, tera type and move pool together. Spreads turned out to be nearly fixed rather than exactly fixed — HP walks down to make hazard chip divide evenly, Attack and Speed get zeroed in specific cases — so the rules are ported from the simulator and checked against 2,400 of its own generated sets. Every stat matches." },
-    { n: "Battle state reader", s: "now", tier: "tier 1",
-      why: "Turn the raw protocol the client already receives into a tracked position: our side fully known, theirs revealed piece by piece." },
-    { n: "Set inference and world sampling", s: "todo", tier: "tier 1→2",
-      why: "Narrow their likely sets from what's been shown, catch a Choice Scarf from turn order alone, then sample several complete teams that don't contradict anything seen." },
-    { n: "Search layer", s: "todo", tier: "tier 1→2",
-      why: "Search each sampled world, pool the rankings into one answer, and veto the obvious blunders — clicking into an immunity, a status move on your last Pokémon." },
-    { n: "Live overlay", s: "todo", tier: "tier 1",
-      why: "The part you actually see: ranked moves with damage numbers and a reason, drawn inside the battle you're playing." },
-    { n: "Strength measurement", s: "todo", tier: "tier 3",
+    { n: "Battle state reader", s: "done", tier: "tier 1",
+      why: "Turns the protocol into a tracked position. Most of the work went into proving a Choice Scarf from turn order: the first version claimed four and every one was wrong. Grassy Glide takes its priority from the terrain, a side that switched never moved at all, and Trick Room sets run zero Speed on purpose. It now reasons over the range a speed could be in, and makes no false claims across 521 turns of real games." },
+    { n: "Set inference and world sampling", s: "done", tier: "tier 1→2",
+      why: "Narrows their set from what's been revealed, then samples several complete teams that contradict nothing seen. Turns one guess into a distribution, which is the biggest gain after getting the damage numbers right." },
+    { n: "Search layer", s: "done", tier: "tier 1→2",
+      why: "Searches each sampled set and pools the rankings, so a move that wins big against one possibility and loses the game against another doesn't beat one that's solid against both. Then hard rules veto the obvious blunders." },
+    { n: "The page", s: "done", tier: "tier 1",
+      why: "Type your Showdown name, it finds your live battle and watches it. Ranked options with how much each swings depending on their set, and a reason attached to the call." },
+    { n: "Strength measurement", s: "now", tier: "tier 3",
       why: "Play real games, record the rating, and check every later change head-to-head before believing it helped." }
   ]
 };
