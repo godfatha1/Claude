@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Connection check</title>
+<style>
+  :root{--bg:#f6f8fb;--card:#fff;--fg:#111620;--dim:#596578;--line:#d9e1ec;
+        --ok:#0ca30c;--bad:#d03b3b;--warn:#fab219;color-scheme:light}
+  @media (prefers-color-scheme:dark){:root{--bg:#0e1218;--card:#161c25;--fg:#eef2f8;
+        --dim:#97a3b5;--line:#283240;color-scheme:dark}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;
+       padding:20px 16px 40px}
+  .wrap{max-width:560px;margin:0 auto}
+  h1{font-size:20px;margin:0 0 4px}
+  p.lead{margin:0 0 18px;color:var(--dim);font-size:13.5px}
+  .row{background:var(--card);border:1px solid var(--line);border-radius:7px;
+       padding:12px 14px;margin-bottom:9px}
+  .name{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px}
+  .verdict{font-family:ui-monospace,Menlo,monospace;font-size:12px;margin-top:5px;
+           color:var(--dim);word-break:break-word}
+  .pill{font-family:ui-monospace,monospace;font-size:10px;font-weight:700;
+        letter-spacing:.05em;padding:2px 6px;border-radius:3px;border:1px solid}
+  .pill.ok{color:var(--ok);border-color:var(--ok)}
+  .pill.bad{color:var(--bad);border-color:var(--bad)}
+  .pill.wait{color:var(--warn);border-color:var(--warn)}
+  #summary{margin-top:18px;padding:14px;border-radius:7px;background:var(--card);
+           border:1px solid var(--line);font-size:14px}
+  textarea{width:100%;height:120px;margin-top:10px;font-family:ui-monospace,monospace;
+           font-size:11px;background:var(--bg);color:var(--fg);
+           border:1px solid var(--line);border-radius:6px;padding:9px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Connection check</h1>
+  <p class="lead">Working out whether Showdown will let this site talk to it directly.
+     Takes a few seconds. Nothing is sent anywhere and no login is needed.</p>
+
+  <div id="rows"></div>
+
+  <div id="summary">Running…</div>
+  <textarea id="copy" readonly aria-label="Result to copy back"></textarea>
+</div>
+
+<script>
+const rows = document.getElementById('rows');
+const results = [];
+
+function addRow(name) {
+  const el = document.createElement('div');
+  el.className = 'row';
+  el.innerHTML = `<div class="name"><span class="pill wait">…</span><span>${name}</span></div>
+                  <div class="verdict">checking</div>`;
+  rows.appendChild(el);
+  return {
+    done(ok, detail) {
+      el.querySelector('.pill').className = `pill ${ok ? 'ok' : 'bad'}`;
+      el.querySelector('.pill').textContent = ok ? 'YES' : 'NO';
+      el.querySelector('.verdict').textContent = detail;
+      results.push({ name, ok, detail });
+    },
+  };
+}
+
+// 1. Can we reach the login server from this domain at all?
+async function checkLoginServer() {
+  const row = addRow('Login server answers this site');
+  try {
+    const body = new URLSearchParams({ act: 'getassertion', userid: 'guest99999', challstr: 'x' });
+    const res = await fetch('https://play.pokemonshowdown.com/action.php', {
+      method: 'POST',
+      body,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    });
+    const text = (await res.text()).slice(0, 120);
+    row.done(true, `HTTP ${res.status} — replied: ${text || '(empty)'}`);
+  } catch (err) {
+    row.done(false, `blocked: ${err.message}`);
+  }
+}
+
+// 2. Does the open data API work? (A control: this one is documented as open.)
+async function checkOpenApi() {
+  const row = addRow('Open data API works (control)');
+  try {
+    const res = await fetch('https://play.pokemonshowdown.com/data/pokedex.json');
+    row.done(res.ok, `HTTP ${res.status}`);
+  } catch (err) {
+    row.done(false, `blocked: ${err.message}`);
+  }
+}
+
+// 3. Can we open a battle connection from this domain?
+function checkSocket() {
+  const row = addRow('Battle server accepts a connection');
+  return new Promise((resolve) => {
+    let socket;
+    const timer = setTimeout(() => {
+      row.done(false, 'no answer after 12 seconds');
+      try { socket?.close(); } catch {}
+      resolve();
+    }, 12000);
+    try {
+      socket = new WebSocket('wss://sim3.psim.us/showdown/websocket');
+      socket.onmessage = (e) => {
+        clearTimeout(timer);
+        const first = String(e.data).split('\n')[0].slice(0, 60);
+        row.done(true, `connected — first message: ${first}`);
+        socket.close();
+        resolve();
+      };
+      socket.onerror = () => {
+        clearTimeout(timer);
+        row.done(false, 'the connection was refused');
+        resolve();
+      };
+    } catch (err) {
+      clearTimeout(timer);
+      row.done(false, err.message);
+      resolve();
+    }
+  });
+}
+
+(async () => {
+  await checkOpenApi();
+  await checkLoginServer();
+  await checkSocket();
+
+  const loginOk = results.find((r) => r.name.startsWith('Login server'))?.ok;
+  const socketOk = results.find((r) => r.name.startsWith('Battle server'))?.ok;
+
+  const summary = document.getElementById('summary');
+  if (loginOk && socketOk) {
+    summary.innerHTML = '<b>Good.</b> Showdown will talk to this site directly, '
+      + 'so the game can run inside our own page. Tell Claude "login check passed".';
+  } else if (socketOk && !loginOk) {
+    summary.innerHTML = '<b>Half.</b> Watching battles works, but logging in from '
+      + 'this site is blocked. Tell Claude "login blocked, watching works".';
+  } else {
+    summary.innerHTML = '<b>Blocked.</b> Showdown will not talk to this site. '
+      + 'Tell Claude "both blocked".';
+  }
+
+  document.getElementById('copy').value = results
+    .map((r) => `${r.ok ? 'YES' : 'NO '}  ${r.name}: ${r.detail}`).join('\n');
+})();
+</script>
+</body>
+</html>

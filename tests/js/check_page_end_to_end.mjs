@@ -244,13 +244,16 @@ const overflow = await page.evaluate(() =>
   document.documentElement.scrollWidth - document.documentElement.clientWidth);
 check('no sideways scrolling at 390px', overflow <= 1, `${overflow}px wider than the screen`);
 
-const frameBox = await page.evaluate(() => {
-  const f = document.getElementById('game').getBoundingClientRect();
-  return { w: Math.round(f.width), h: Math.round(f.height) };
+// Showdown refuses to run inside another page, so there is no frame to measure
+// until we host our own copy of the client. Check the advice fills the space
+// instead of leaving a blank rectangle.
+const stageBox = await page.evaluate(() => {
+  const el = document.querySelector('.sheet');
+  const r = el.getBoundingClientRect();
+  return { w: Math.round(r.width), h: Math.round(r.height), shown: r.height > 0 };
 });
-check('the game gets most of the screen', frameBox.h > 500,
-  `${frameBox.w}x${frameBox.h}`);
-console.log(`         game area: ${frameBox.w}x${frameBox.h}`);
+check('the advice fills the screen', stageBox.shown && stageBox.h > 300,
+  `${stageBox.w}x${stageBox.h}`);
 
 // 9. Clean console?
 check('nothing 404s', badResponses.length === 0, badResponses.slice(0, 3).join(' / '));
