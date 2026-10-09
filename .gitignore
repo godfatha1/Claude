@@ -18,3 +18,6 @@ engine-wasm/target/
 node_modules/
 package-lock.json
 tests/js/page-phone.png
+
+tests/js/false-scarfs/
+tests/js/*.png

@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.3.0
+**Version:** 0.4.0
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-08
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -34,7 +34,17 @@ stats and a public set database, and both are big advantages.
   both blocked by the egress proxy — use the raw GitHub host).
 - **No language model in the decision path.** Challenge results showed it trails
   search and degrades under time pressure.
-- **Delivery is a static site on GitHub Pages, engine compiled to WebAssembly.**
+- **It runs on the phone, in Termux, like PhotoFrame and GameBible.** `serve.py`
+  passes Showdown's site through and adds the panel to their page. That fixes
+  three things at once: their client refuses to run in a frame (nothing is in a
+  frame here), logging in from another website is blocked (through the mirror
+  every request is same-origin, as on their own site), and a spectator can't see
+  your own team (from inside the page the panel reads the same feed the client
+  does). Install with `deploy-android/install.sh`.
+- **The GitHub Pages version still works** as the no-install fallback, but it
+  can only watch from outside and so can't see your own bench.
+- **Engine compiled to WebAssembly** — originally for Pages, still right here:
+  the search runs on the phone either way.
   Forced by phone + Pages hosting, and better anyway: nothing to deploy, nothing
   leaves the device. Measured ~43k positions/sec on mid-range phone hardware,
   210 KB gzipped. Crucially the ranking doesn't change with the budget, so a
@@ -146,11 +156,13 @@ against — both are verified against the same 2,400 simulator sets.
 
 ## Open questions
 
-- **Our own bench is invisible.** A spectator sees our side the way the opponent
-  does. The search fills unseen slots with plausible guesses so the evaluation is
-  sound, and the panel collapses any switch to a guessed teammate into one
-  "Switch out" row rather than naming a Pokémon it can't see. Honest, but a
-  one-tap "this is my lead's set" would make turn-1 advice much sharper.
+- **Our own bench** — solved in the Termux version, which reads the private feed
+  and names every teammate from turn one. Still a limitation on the Pages
+  version, which watches from outside.
+- **One false Choice Scarf claim seen once**, in a batch of real games, and not
+  reproducible in ~570 games since. The test now saves the whole game to
+  `tests/js/false-scarfs/` when it happens, so the next one can be fixed with
+  facts rather than guesses.
 - **Unseen bench generation** is the known weak point in every randbats bot, ours
   included. Sampled uniformly from the roster, which is at least unbiased.
 - **Scarf recall is only lightly measured.** Precision is solid (no false claims

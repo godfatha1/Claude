@@ -23,8 +23,12 @@ if curl -sS --max-time 4 -o /dev/null "http://localhost:8111/" 2>/dev/null; then
   node tests/js/check_state_reader.mjs "${GAMES:-16}" || fail=1
 
   echo
-  echo "=== the whole page, in a browser, against a live battle ==="
+  echo "=== the standalone page, in a browser, against a live battle ==="
   node tests/js/check_page_end_to_end.mjs || fail=1
+
+  echo
+  echo "=== the panel inside a Showdown page (how it runs on the phone) ==="
+  node tests/js/check_panel_in_page.mjs || fail=1
 else
   echo "  skipped — no Showdown server on :8111"
   echo "  start one with: scripts/local_server.sh"

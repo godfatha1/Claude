@@ -13,7 +13,7 @@
 //   - revealed moves are really in the set that used them
 //
 // Usage:  node tests/js/check_state_reader.mjs [games] [ws://host:port]
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import WebSocket from 'ws';
 import { Dex, toId } from '../../app/data.js';
 import { Battle } from '../../app/battle.js';
@@ -213,7 +213,29 @@ function verify(game) {
       if (mon.scarfProven) {
         stats.scarfsFound += 1;
         if (toId(match.item) === 'choicescarf') stats.scarfsReal += 1;
-        else problems.falseScarf.push(`${game.room} ${slot}: claimed Scarf on ${mon.speciesName}, really ${match.item || 'nothing'}`);
+        else {
+          problems.falseScarf.push(`${game.room} ${slot}: claimed Scarf on ${mon.speciesName}, really ${match.item || 'nothing'}`);
+          // A false claim is rare and misleads when it happens, so keep the
+          // whole game. Guessing at the cause from a one-line summary is how
+          // the first four wrong guards got written.
+          try {
+            mkdirSync('tests/js/false-scarfs', { recursive: true });
+            const name = `tests/js/false-scarfs/${Date.now()}-${toId(mon.speciesName)}.json`;
+            writeFileSync(name, JSON.stringify({
+              claimedOn: mon.speciesName,
+              reallyHeld: match.item,
+              realAbility: match.ability ?? match.baseAbility,
+              realMoves: match.moves,
+              trackedSpeedRange: mon.speedRange?.(),
+              trackedBoosts: mon.boosts,
+              trackedStatus: mon.status,
+              note: battle.notes.find((n) => n.kind === 'scarf')?.text,
+              trueTeams: game.trueTeams,
+              protocol: game.spectated,
+            }, null, 1));
+            console.log(`\n  saved a false claim to ${name}`);
+          } catch (err) { console.warn('could not save it:', err.message); }
+        }
       }
 
       // Revealed moves must really be in its set.
