@@ -124,16 +124,38 @@ function checkSocket() {
   });
 }
 
+// 4. Is the relay running on this phone, and will the browser let us use it?
+async function checkRelay() {
+  const row = addRow('Relay on this phone');
+  const port = new URLSearchParams(location.search).get('port') || '8137';
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/health`);
+    const data = await res.json();
+    if (!data.originAllowed) {
+      row.done(false, `running, but it won't accept this page. Start it with --allow ${location.origin}`);
+      return;
+    }
+    row.done(true, `running on port ${port} and will accept this page`);
+  } catch (err) {
+    row.done(false, `not reachable on port ${port} — is it started? (${err.message})`);
+  }
+}
+
 (async () => {
   await checkOpenApi();
   await checkLoginServer();
   await checkSocket();
+  await checkRelay();
 
   const loginOk = results.find((r) => r.name.startsWith('Login server'))?.ok;
   const socketOk = results.find((r) => r.name.startsWith('Battle server'))?.ok;
+  const relayOk = results.find((r) => r.name.startsWith('Relay'))?.ok;
 
   const summary = document.getElementById('summary');
-  if (loginOk && socketOk) {
+  if (relayOk && socketOk) {
+    summary.innerHTML = '<b>Relay works.</b> Everything needed is in place — '
+      + 'the game can run inside our own page. Tell Claude "relay works".';
+  } else if (loginOk && socketOk) {
     summary.innerHTML = '<b>Good.</b> Showdown will talk to this site directly, '
       + 'so the game can run inside our own page. Tell Claude "login check passed".';
   } else if (socketOk && !loginOk) {
