@@ -5,7 +5,17 @@ Termux:Boot.
 
 ## Install
 
-In Termux:
+One command, over ssh into Termux or in a Termux shell. It installs what it
+needs, fetches itself, sets up the boot hook and starts:
+
+```sh
+curl -sSL https://raw.githubusercontent.com/godfatha1/Claude/claude/pokemon-showdown-assistant-3xna06/deploy-android/install.sh | bash
+```
+
+Running it again updates and restarts. The server is started with `setsid` and
+tracked by pid, so it survives the ssh session closing.
+
+### Or by hand
 
 ```sh
 pkg install -y python git
@@ -44,9 +54,13 @@ Pulls the latest and restarts.
 
 ```sh
 tail -20 ~/.randbats.log          # what it is doing
-pgrep -af serve.py                # is it up
-pkill -f serve.py                 # stop it
+kill -0 $(cat ~/.randbats.pid)    # is it up
+kill $(cat ~/.randbats.pid)       # stop it
 ```
+
+Stopping goes by pid rather than `pkill -f serve.py`, because that pattern also
+matches any shell whose command line contains the text — including the ssh
+invocation that started it.
 
 ## Notes
 

@@ -61,6 +61,7 @@ cat > "$HOME/.termux/boot/randbats" <<BOOT
 #!/data/data/com.termux/files/usr/bin/sh
 # Keeps the assistant up across reboots.
 termux-wake-lock
+echo \$\$ > "\$HOME/.randbats.pid"
 exec python3 "$REPO/serve.py" --port $PORT >> "\$HOME/.randbats.log" 2>&1
 BOOT
 chmod +x "$HOME/.termux/boot/randbats"
@@ -72,10 +73,37 @@ fi
 
 # --- run it --------------------------------------------------------------
 say "starting it"
-pkill -f "serve\.py" 2>/dev/null || true
-sleep 1
+
+# Stop the old one by pid, not by pattern. `pkill -f serve.py` also matches any
+# shell whose command line happens to contain that text — including the ssh
+# invocation running this script, which it will cheerfully kill.
+PIDFILE="$HOME/.randbats.pid"
+if [ -f "$PIDFILE" ]; then
+  old="$(cat "$PIDFILE" 2>/dev/null || true)"
+  if [ -n "$old" ] && kill -0 "$old" 2>/dev/null; then
+    # Make sure it is ours before signalling it.
+    if tr '\0' ' ' < "/proc/$old/cmdline" 2>/dev/null | grep -q "serve.py"; then
+      kill "$old" 2>/dev/null || true
+      sleep 1
+      kill -9 "$old" 2>/dev/null || true
+      note "stopped the previous one (pid $old)"
+    fi
+  fi
+  rm -f "$PIDFILE"
+fi
+
 termux-wake-lock 2>/dev/null || true
-nohup python3 "$REPO/serve.py" --port "$PORT" >> "$HOME/.randbats.log" 2>&1 &
+
+# setsid, not just nohup. Run over ssh, the whole process group goes when the
+# connection closes, and nohup alone only covers the hangup signal — the server
+# would look like it started and be gone by the time you opened the page.
+if command -v setsid >/dev/null; then
+  setsid python3 "$REPO/serve.py" --port "$PORT" >> "$HOME/.randbats.log" 2>&1 < /dev/null &
+else
+  nohup python3 "$REPO/serve.py" --port "$PORT" >> "$HOME/.randbats.log" 2>&1 < /dev/null &
+fi
+echo $! > "$PIDFILE"
+disown 2>/dev/null || true
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 1
@@ -94,7 +122,7 @@ if [ "${code:-}" = "200" ]; then
   note "sits at the bottom of the page. Tap it for the full read."
   echo
   note "log:   tail -f ~/.randbats.log"
-  note "stop:  pkill -f serve.py"
+  note "stop:  kill \$(cat ~/.randbats.pid)"
 else
   note "it didn't come up. Last few lines of the log:"
   tail -n 15 "$HOME/.randbats.log" 2>/dev/null | sed 's/^/      /'
