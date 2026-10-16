@@ -1,0 +1,15 @@
+<!doctype html><meta charset="utf-8"><title>harness</title>
+<script type="module">
+// Loads the real data and engine so a test can drive the modules in a browser.
+import { Dex } from '/app/data.js';
+import { Engine } from '/app/engine.js';
+window.__ready = false;
+try {
+  const [dex, engine] = await Promise.all([
+    Dex.load('/data/gen9randombattle.json'),
+    Engine.load('/engine/poke_engine_wasm.js'),
+  ]);
+  window.__h = { dex, engine };
+  window.__ready = true;
+} catch (e) { window.__err = String(e); window.__ready = 'error'; }
+</script>

@@ -59,11 +59,11 @@ function sampleSet(dex, mon, random) {
     }
   }
 
-  // A proven Scarf beats anything the role pool says.
+  // A proven or confirmed Scarf beats anything the role pool says.
   let item;
   if (mon.itemKnownGone) item = '';
   else if (mon.item) item = toId(mon.item);
-  else if (mon.scarfProven) item = 'choicescarf';
+  else if (mon.hasScarf) item = 'choicescarf';
   else item = toId(pick(role?.i?.length ? role.i : (mon.data.I ?? ['']), random) ?? '');
 
   const ability = mon.ability
@@ -94,9 +94,9 @@ function sampleSet(dex, mon, random) {
     terastallized: mon.terastallized,
     weight: mon.data.w ?? 0,
     moves: moves.slice(0, 4),
-    disabled: mon.choiceLockedTo
-      ? moves.slice(0, 4).filter((m) => m !== mon.choiceLockedTo)
-      : [],
+    // Showdown's own word on our side, a worked-out Choice lock on theirs.
+    disabled: mon.disabledMoves(moves.slice(0, 4)),
+    pp: moves.slice(0, 4).map((m) => mon.pp.get(m) ?? 16),
     restTurns: mon.restTurns,
     sleepTurns: mon.sleepTurns,
   };
@@ -226,9 +226,15 @@ export function sampleWorlds(dex, battle, { count = 4, seed = null } = {}) {
     const ours = buildSide(battle.us);
     const theirs = buildSide(battle.them);
 
+    // What's happening to each active right now — an Encore, a Substitute,
+    // being trapped — is the same in every world, and the engine models all of
+    // it. It just has to be told.
+    const ourSlot = battle.slotFactsFor(battle.us);
+    const theirSlot = battle.slotFactsFor(battle.them);
+
     worlds.push({
-      ours: { ...ours, boosts: field.ourBoosts, ...field.ourConditions },
-      theirs: { ...theirs, boosts: field.theirBoosts, ...field.theirConditions },
+      ours: { ...ours, boosts: field.ourBoosts, ...field.ourConditions, ...ourSlot },
+      theirs: { ...theirs, boosts: field.theirBoosts, ...field.theirConditions, ...theirSlot },
       // Carried alongside so the panel knows which switches it may name.
       seenOurs: new Set(battle.us.team.map((m) => m.id)),
       weather: field.weather,
@@ -253,19 +259,35 @@ export function readOpponent(battle) {
   const itemPool = new Set();
   for (const role of roles) for (const item of role.i ?? []) itemPool.add(item);
 
+  const abilityPool = new Set();
+  for (const role of roles) for (const a of role.a ?? []) abilityPool.add(a);
+
+  // Seen in the battle, as opposed to confirmed by tapping.
+  const seenMoves = [...mon.revealedMoves.entries()]
+    .filter(([id, count]) => count > 0 || !mon.confirmed.moves.has(id))
+    .map(([id]) => id);
+
   return {
     species: mon.speciesName,
     level: mon.level,
     hpPercent: Math.round(mon.hpPercent),
     status: mon.status,
-    revealed: [...mon.revealedMoves.keys()],
+    revealed: seenMoves,
+    confirmedMoves: [...mon.confirmed.moves],
     roles: roles.map((r) => r.name),
     pinned: roles.length === 1,
     item: mon.item,
+    itemConfirmed: mon.confirmed.item,
+    itemSeen: Boolean(mon.item) && !mon.confirmed.item,
     scarfProven: mon.scarfProven,
     possibleItems: mon.item ? [toId(mon.item)] : [...itemPool],
+    ability: mon.ability,
+    abilityConfirmed: mon.confirmed.ability,
+    abilitySeen: Boolean(mon.ability) && !mon.confirmed.ability,
+    possibleAbilities: mon.ability ? [toId(mon.ability)] : [...abilityPool],
     speed: range ? (range.min === range.max ? `${range.max}` : `${range.min}–${range.max}`) : null,
-    // Moves it could still be holding that we haven't seen.
+    volatiles: [...mon.volatiles],
+    // Moves it could still be holding that we haven't seen or confirmed.
     unseenMoves: [...new Set(roles.flatMap((r) => r.m))]
       .filter((m) => !mon.revealedMoves.has(m)),
   };

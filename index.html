@@ -133,6 +133,22 @@ dl.read dd{margin:0;font-family:var(--data);font-size:12px;text-align:right;
            min-width:0;word-break:break-word}
 dd.pinned{color:var(--good);font-weight:600}
 dd.proven{color:var(--warning);font-weight:600}
+#oppRead{padding:4px 12px 10px;display:block}
+#oppRead .hd{font-weight:600;font-size:14px;padding:6px 0}
+#oppRead .st{font-family:var(--data);font-size:11px;color:var(--warning);margin-left:6px}
+#oppRead .r{display:flex;justify-content:space-between;gap:12px;padding:5px 0;font-size:12.5px}
+#oppRead .r span{color:var(--fg-dim)} #oppRead .r b{font-family:var(--data);font-weight:500}
+#oppRead .pinned{color:var(--good)} #oppRead .proven{color:var(--warning)}
+#oppRead .chips{display:flex;flex-wrap:wrap;align-items:center;gap:5px;padding:4px 0}
+#oppRead .chips .lbl{color:var(--fg-dim);font-size:12px;min-width:46px}
+#oppRead .hint{font-size:10.5px;color:var(--fg-faint);margin-top:4px}
+.chip{all:unset;cursor:pointer;font:inherit;font-size:12px;line-height:1;padding:5px 8px;border-radius:999px;
+      border:1px solid var(--border-strong);color:var(--fg);background:var(--surface)}
+.chip:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.chip.maybe{border-style:dashed;color:var(--fg-dim)}
+.chip.sure{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
+.chip.sure::after{content:' ✓'}
+.chip.seen{border-color:var(--good);background:color-mix(in srgb,var(--good) 10%,transparent);color:var(--good);font-weight:600;cursor:default}
 
 ul.notes{list-style:none;margin:0;padding:0}
 ul.notes>li{padding:9px 12px;border-bottom:1px solid var(--border);font-size:12.5px;
@@ -287,6 +303,7 @@ import { Engine } from './app/engine.js';
 import { Advisor } from './app/advisor.js';
 import { Spectator } from './app/showdown.js';
 import { readOpponent } from './app/infer.js';
+import { renderOpponent, applyTap } from './app/opponent-ui.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -477,18 +494,7 @@ function render() {
   if (read) {
     $('oppName').textContent = `${read.species} · L${read.level}`;
     $('oppHp').textContent = `${read.hpPercent}%${read.status !== 'none' ? ` · ${read.status}` : ''}`;
-    const rows = [
-      ['Could be', read.roles.join(', ') || 'unknown', read.pinned ? 'pinned' : ''],
-      ['Speed', read.speed ?? 'unknown', read.scarfProven ? 'proven' : ''],
-      ['Item', read.scarfProven ? 'Choice Scarf (proven)'
-               : read.item ? read.item
-               : read.possibleItems.join(', ') || 'unknown',
-        read.scarfProven ? 'proven' : ''],
-      ['Moves seen', read.revealed.map((m) => dex.move(m)?.name ?? m).join(', ') || 'none yet', ''],
-      ['Might also have', read.unseenMoves.slice(0, 6).map((m) => dex.move(m)?.name ?? m).join(', ') || '—', ''],
-    ];
-    $('oppRead').innerHTML = rows
-      .map(([k, v, cls]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`).join('');
+    $('oppRead').innerHTML = renderOpponent(read, dex);
     $('readSection').hidden = false;
   }
 
@@ -536,6 +542,11 @@ $('nameInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('watchBtn').click();
 });
 $('stopBtn').addEventListener('click', (e) => { e.stopPropagation(); stopWatching(); });
+$('oppRead').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (!battle?.them?.active) return;
+  if (applyTap(e.target, battle.them.active)) { render(); think(); }
+});
 $('sheet').addEventListener('click', (e) => e.stopPropagation());
 
 for (const button of document.querySelectorAll('.seg button')) {

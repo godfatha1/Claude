@@ -29,6 +29,10 @@ if curl -sS --max-time 4 -o /dev/null "http://localhost:8111/" 2>/dev/null; then
   echo
   echo "=== the panel inside a Showdown page (how it runs on the phone) ==="
   node tests/js/check_panel_in_page.mjs || fail=1
+
+  echo
+  echo "=== facts the tracker knows reach the engine ==="
+  node tests/js/check_facts_reach_engine.mjs || fail=1
 else
   echo "  skipped — no Showdown server on :8111"
   echo "  start one with: scripts/local_server.sh"

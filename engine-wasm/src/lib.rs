@@ -18,10 +18,11 @@ use poke_engine::engine::items::Items;
 use poke_engine::engine::state::MoveChoice;
 use poke_engine::mcts::{perform_mcts, MctsSideResult};
 use poke_engine::pokemon::PokemonName;
-use poke_engine::engine::state::{Terrain, Weather};
+use poke_engine::engine::state::{PokemonVolatileStatus, Terrain, Weather};
 use poke_engine::state::{
-    Move, Pokemon, PokemonIndex, PokemonMoves, PokemonNature, PokemonStatus, PokemonType, Side,
-    SideConditions, SidePokemon, State, StateTerrain, StateTrickRoom, StateWeather,
+    LastUsedMove, Move, Pokemon, PokemonIndex, PokemonMoveIndex, PokemonMoves, PokemonNature,
+    PokemonStatus, PokemonType, Side, SideConditions, SidePokemon, State, StateTerrain,
+    StateTrickRoom, StateWeather, VolatileStatusDurations,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -71,6 +72,32 @@ struct InSide {
     tailwind: i8,
     safeguard: i8,
     toxic_count: i8,
+
+    // --- what's happening to the active Pokémon right now ---
+    //
+    // These belong to the slot, not the Pokémon, which is why they sit here.
+    // Every one of them changes what the search should consider: an Encore
+    // removes three of four moves, a Substitute changes who takes the hit,
+    // being trapped removes every switch. Left out, the engine assumes none of
+    // it is happening.
+
+    /// Volatile statuses on the active, in the engine's own spelling
+    /// (SUBSTITUTE, ENCORE, TAUNT, LEECHSEED, CONFUSION, ...). Unknown names
+    /// are dropped rather than guessed at.
+    volatiles: Vec<String>,
+    confusion_turns: i8,
+    encore_turns: i8,
+    locked_move_turns: i8,
+    slow_start_turns: i8,
+    taunt_turns: i8,
+    yawn_turns: i8,
+    /// HP left on a Substitute. Only meaningful alongside SUBSTITUTE.
+    substitute_health: i16,
+    /// The move id the active used last, or "switch", or "". Encore and a
+    /// Choice lock both key off this.
+    last_used_move: String,
+    /// Showdown has told us this Pokémon cannot switch out.
+    force_trapped: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -231,6 +258,45 @@ fn build_side(s: &InSide) -> Result<Side, String> {
     side.speed_boost = boost(4);
     side.accuracy_boost = boost(5);
     side.evasion_boost = boost(6);
+
+    // Volatile statuses. `from_str` hands back NONE for anything it doesn't
+    // recognise rather than an error, so filter that out — otherwise a typo
+    // would silently register as "nothing".
+    for name in &s.volatiles {
+        if let Ok(status) = PokemonVolatileStatus::from_str(name) {
+            if status != PokemonVolatileStatus::NONE {
+                side.volatile_statuses.insert(status);
+            }
+        }
+    }
+    side.volatile_status_durations = VolatileStatusDurations {
+        confusion: s.confusion_turns,
+        encore: s.encore_turns,
+        lockedmove: s.locked_move_turns,
+        slowstart: s.slow_start_turns,
+        taunt: s.taunt_turns,
+        yawn: s.yawn_turns,
+    };
+    side.substitute_health = s.substitute_health;
+    side.force_trapped = s.force_trapped;
+
+    // The last move used, as the engine's index into the active's moveset.
+    // Encore needs it to know which move is locked in.
+    side.last_used_move = match s.last_used_move.as_str() {
+        "" => LastUsedMove::None,
+        "switch" => LastUsedMove::Switch(side.active_index),
+        id => {
+            let active = s.pokemon.get(s.active.min(5));
+            let at = active.and_then(|m| m.moves.iter().position(|x| x == id));
+            match at {
+                Some(0) => LastUsedMove::Move(PokemonMoveIndex::M0),
+                Some(1) => LastUsedMove::Move(PokemonMoveIndex::M1),
+                Some(2) => LastUsedMove::Move(PokemonMoveIndex::M2),
+                Some(3) => LastUsedMove::Move(PokemonMoveIndex::M3),
+                _ => LastUsedMove::None,
+            }
+        }
+    };
 
     Ok(side)
 }

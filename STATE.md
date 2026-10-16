@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.4.0
+**Version:** 0.5.0
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-08
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -145,6 +145,33 @@ tests/              python + js, including a full browser run against a live bat
 The Python layer is no longer the runtime. Since everything moved into the
 browser it generates `data/` and acts as the reference the JS port is checked
 against — both are verified against the same 2,400 simulator sets.
+
+## What the engine is told (and the rule for changing it)
+
+The search itself — sampling, pooling, the blunder guards — hasn't been touched
+since it was built, and the rule is: don't, unless it's certainly better on
+paper. What *has* changed is how much of the position reaches it. Everything
+below is a fact the engine already models and the tracker already knew; it just
+wasn't being handed over:
+
+- Volatile statuses on either active (Encore, Taunt, Substitute, confusion,
+  Leech Seed, two-turn moves, recharge…) with turns remaining, counted down each
+  turn. Durations are the format's nominal ones (Encore 3, Taunt 3, confusion
+  2, Yawn 1, Slow Start 5) — close, not exact.
+- The last move each side used, which is what Encore and a Choice lock key off.
+- Showdown's own word on *our* active, from the request: which moves are
+  usable right now, PP, and whether we're trapped. Authoritative — it's what
+  the client greys out — so it overrides anything inferred.
+- Substitute HP, as a quarter of max HP when it goes up. An upper bound: we
+  can't see damage it takes afterwards, but it beats "no Substitute".
+- Sleep turns counted, Rest's own clock.
+- **Tap to confirm.** In the panel, tap a move, item or ability you know they
+  have. It's treated like something seen: the set narrows, a confirmed Scarf
+  moves the speed numbers, a confirmed move is in every sampled set. Tap again
+  to undo. Things actually witnessed are locked and can't be undone.
+
+`tests/js/check_facts_reach_engine.mjs` proves each one arrives and changes the
+legal options (an Encore leaves one move; trapped removes every switch).
 
 ## Measured
 

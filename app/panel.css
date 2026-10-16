@@ -139,3 +139,33 @@
 
 /* Keep the client's own controls reachable above the collapsed bar. */
 body { padding-bottom: 58px !important; }
+
+/* ------------------------ tap-to-confirm chips -------------------------- */
+
+.assist-read .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; padding: 4px 0; }
+.assist-read .chips .lbl { color: #596578; font-size: 12px; flex: none; margin-right: 3px; min-width: 46px; }
+@media (prefers-color-scheme: dark) { .assist-read .chips .lbl { color: #97a3b5; } }
+.assist-read .hint { font-size: 10.5px; color: #8b97a8; margin-top: 4px; }
+.assist-read .st { font-family: ui-monospace, monospace; font-weight: 500; font-size: 11px;
+                   color: #fab219; margin-left: 6px; }
+.assist-read .pinned { color: #0ca30c; }
+.assist-read .proven { color: #fab219; }
+
+.chip {
+  all: unset; cursor: pointer; font: inherit;
+  font-size: 12px; line-height: 1; padding: 5px 8px; border-radius: 999px;
+  border: 1px solid #c2cdde; color: #111620; background: #fff;
+  -webkit-tap-highlight-color: transparent;
+}
+@media (prefers-color-scheme: dark) { .chip { border-color: #374456; color: #eef2f8; background: #161c25; } }
+.chip:focus-visible { outline: 2px solid #2a5fd6; outline-offset: 1px; }
+/* maybe: still open, tap to confirm */
+.chip.maybe { border-style: dashed; color: #596578; }
+@media (prefers-color-scheme: dark) { .chip.maybe { color: #97a3b5; } }
+/* sure: you confirmed it */
+.chip.sure { border-color: #2a5fd6; background: #e7eefc; color: #1d4ab8; font-weight: 600; }
+@media (prefers-color-scheme: dark) { .chip.sure { border-color: #5b8ef5; background: #1a2740; color: #9bbcff; } }
+.chip.sure::after { content: ' ✓'; }
+/* seen: witnessed, locked */
+.chip.seen { border-color: #0ca30c; background: rgba(12, 163, 12, .10); color: #0a7d0a; font-weight: 600; cursor: default; }
+@media (prefers-color-scheme: dark) { .chip.seen { color: #6fdc6f; } }

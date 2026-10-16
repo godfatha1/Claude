@@ -13,6 +13,8 @@ import { Battle, TrackedMon } from './battle.js';
 import { Engine } from './engine.js';
 import { Advisor } from './advisor.js';
 import { readOpponent } from './infer.js';
+import { renderOpponent, applyTap } from './opponent-ui.js';
+import { toId } from './data.js';
 
 const BASE = new URL('.', import.meta.url).href;
 
@@ -187,6 +189,24 @@ function applyOwnTeam(line) {
     }
     if (/fnt/.test(condition)) mon.fainted = true;
   }
+
+  // The request also says, for our active, exactly which moves can be used
+  // right now and how much PP is left. Under Encore, Taunt, Disable or a Choice
+  // lock this is the authoritative list — it's what the client greys out — so
+  // it goes to the engine as-is rather than being inferred.
+  const active = request.active?.[0];
+  const mon = ours.active;
+  if (active && mon) {
+    const listed = active.moves ?? [];
+    const usable = new Set(listed.filter((m) => !m.disabled).map((m) => m.id ?? toId(m.move)));
+    mon.requestDisabled = new Set(
+      [...mon.revealedMoves.keys()].filter((id) => !usable.has(id)));
+    for (const m of listed) {
+      const id = m.id ?? toId(m.move);
+      if (id && typeof m.pp === 'number') mon.pp.set(id, m.pp);
+    }
+    ours.trapped = Boolean(active.trapped);
+  }
   queueThink();
 }
 
@@ -261,19 +281,7 @@ function show(result) {
 function render() {
   if (!battle) return;
   const read = readOpponent(battle);
-  if (read) {
-    const rows = [
-      ['Could be', read.roles.join(', ') || 'unknown'],
-      ['Speed', read.speed ?? 'unknown'],
-      ['Item', read.scarfProven ? 'Choice Scarf (proven)'
-        : read.item || read.possibleItems.join(', ') || 'unknown'],
-      ['Might have', read.unseenMoves.slice(0, 6)
-        .map((m) => dex.move(m)?.name ?? m).join(', ') || '—'],
-    ];
-    $('assist-read').innerHTML =
-      `<div class="hd">${esc(read.species)} · L${read.level} · ${read.hpPercent}%</div>`
-      + rows.map(([k, v]) => `<div class="r"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('');
-  }
+  if (read) $('assist-read').innerHTML = renderOpponent(read, dex);
   const notes = battle.notes.slice(-3).reverse();
   $('assist-notes').innerHTML = notes
     .map((n) => `<li>${esc(n.text)}</li>`).join('');
@@ -290,6 +298,13 @@ async function start() {
     el.dataset.open = String(open);
     $('assist-bar').setAttribute('aria-expanded', String(open));
   });
+  // Tapping a chip confirms (or un-confirms) a fact and re-runs the search.
+  $('assist-read').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!battle?.them?.active) return;
+    if (applyTap(e.target, battle.them.active)) { render(); queueThink(); }
+  });
+
   $('assist-seg').addEventListener('click', (e) => {
     const button = e.target.closest('button');
     if (!button) return;
@@ -308,6 +323,7 @@ async function start() {
     dex = loadedDex;
     engine = loadedEngine;
     advisor = new Advisor(dex, engine);
+    window.__assist = { get battle() { return battle; }, dex, engine, advisor };
     setCall('ready — start a random battle');
     // Only now start reading: the backlog replays into a panel that can show it.
     watchTheConnection(handleChunk);

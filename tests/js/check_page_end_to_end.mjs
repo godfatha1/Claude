@@ -210,8 +210,11 @@ if (ranked.length) {
 // 5. Does the opponent read show something real?
 const oppName = (await page.textContent('#oppName')).trim();
 check('reads their active Pokémon', Boolean(oppName) && oppName !== '—', oppName);
-const roles = await page.$$eval('#oppRead dd', (els) => els.map((e) => e.textContent.trim()));
+// The block is chips now, not <dd> rows: the first .r row is "Could be".
+const roles = await page.$$eval('#oppRead .r b', (els) => els.map((e) => e.textContent.trim()));
 check('narrows their possible sets', roles.some((r) => r && r !== 'unknown'), roles.join(' | '));
+const chips = await page.$$eval('#oppRead .chip', (els) => els.map((e) => `${e.className.replace('chip ', '')}:${e.textContent.trim()}`));
+check('offers things to confirm by tapping', chips.some((c) => c.startsWith('maybe:')), chips.slice(0, 6).join(', '));
 console.log(`         ${oppName}: ${roles[0] ?? '?'}`);
 
 // 6. Does it keep up as turns go by?

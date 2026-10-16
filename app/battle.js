@@ -46,6 +46,21 @@ export class TrackedMon {
 
     this.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
     this.volatiles = new Set();
+    // Turns left on the volatiles that run out, counted down each turn so the
+    // engine knows an Encore has two turns to go rather than guessing.
+    this.volatileTurns = new Map();
+    // What it used last. Encore locks to it and so does a Choice item.
+    this.lastMove = null;
+
+    // Facts you confirmed by tapping in the panel, kept apart from things seen
+    // in the battle so they can be undone. Something actually witnessed never
+    // can be.
+    this.confirmed = { moves: new Set(), item: false, ability: false };
+
+    // For our own side, Showdown tells us outright which moves are usable and
+    // how much PP is left. That beats anything inferred.
+    this.requestDisabled = new Set();
+    this.pp = new Map();
 
     // Set when turn order proves it must be holding a Choice Scarf.
     this.scarfProven = false;
@@ -56,6 +71,54 @@ export class TrackedMon {
   }
 
   get id() { return this.data?.id ?? toId(this.speciesName); }
+
+  /** Mark a move as definitely in its set, on your say-so. Tap again to undo. */
+  confirmMove(moveName) {
+    const id = toId(moveName);
+    if (this.confirmed.moves.has(id)) {
+      this.confirmed.moves.delete(id);
+      // Only forget it if we never actually saw it used.
+      if ((this.revealedMoves.get(id) ?? 0) === 0) this.revealedMoves.delete(id);
+      return false;
+    }
+    this.confirmed.moves.add(id);
+    if (!this.revealedMoves.has(id)) this.revealedMoves.set(id, 0);
+    return true;
+  }
+
+  /** Mark the item, on your say-so. Tap the same one again to undo. */
+  confirmItem(itemName) {
+    const id = toId(itemName);
+    if (this.confirmed.item && toId(this.item) === id) {
+      this.confirmed.item = false;
+      this.item = null;
+      return false;
+    }
+    // Something seen in the battle outranks a tap.
+    if (this.item && !this.confirmed.item) return false;
+    this.item = itemName;
+    this.itemKnownGone = false;
+    this.confirmed.item = true;
+    return true;
+  }
+
+  confirmAbility(abilityName) {
+    const id = toId(abilityName);
+    if (this.confirmed.ability && toId(this.ability) === id) {
+      this.confirmed.ability = false;
+      this.ability = null;
+      return false;
+    }
+    if (this.ability && !this.confirmed.ability) return false;
+    this.ability = abilityName;
+    this.confirmed.ability = true;
+    return true;
+  }
+
+  /** Is it holding a Choice Scarf, by proof or by your confirmation? */
+  get hasScarf() {
+    return this.scarfProven || toId(this.item ?? '') === 'choicescarf';
+  }
   get types() { return this.data?.t ?? []; }
   get isKnown() { return Boolean(this.data); }
 
@@ -93,7 +156,7 @@ export class TrackedMon {
   /** Apply the current boost stage, paralysis and a proven Scarf to a base value. */
   applySpeedModifiers(speed) {
     if (speed == null) return null;
-    if (this.scarfProven) speed = Math.trunc(speed * 1.5);
+    if (this.hasScarf) speed = Math.trunc(speed * 1.5);
     const stage = this.boosts.spe;
     if (stage > 0) speed = Math.trunc(speed * (2 + stage) / 2);
     if (stage < 0) speed = Math.trunc(speed * 2 / (2 - stage));
@@ -144,7 +207,7 @@ export class TrackedMon {
     }
 
     const item = this.item
-      ?? (this.scarfProven ? 'choicescarf' : null)
+      ?? (this.hasScarf ? 'choicescarf' : null)
       ?? (role?.i?.[0] ?? this.data?.I?.[0] ?? '');
     const ability = this.ability ?? role?.a?.[0] ?? this.data?.A?.[0] ?? '';
     const teraType = this.teraType ?? role?.t?.[0] ?? '';
@@ -172,11 +235,44 @@ export class TrackedMon {
       terastallized: this.terastallized,
       weight: this.data?.w ?? 0,
       moves: moves.slice(0, 4),
-      disabled: this.choiceLockedTo
-        ? moves.filter((m) => m !== this.choiceLockedTo).slice(0, 4)
-        : [],
+      disabled: this.disabledMoves(moves.slice(0, 4)),
+      pp: moves.slice(0, 4).map((m) => this.pp.get(m) ?? 16),
       restTurns: this.restTurns,
       sleepTurns: this.sleepTurns,
+    };
+  }
+
+  /**
+   * Which of these moves can't be used right now.
+   *
+   * Two sources, both certain: what Showdown itself said in the request (our
+   * side only — it names Encore, Taunt, Disable and a Choice lock outright),
+   * and a Choice lock we worked out ourselves for the other side.
+   */
+  disabledMoves(moves) {
+    const out = new Set(this.requestDisabled);
+    if (this.choiceLockedTo) {
+      for (const m of moves) if (m !== this.choiceLockedTo) out.add(m);
+    }
+    return moves.filter((m) => out.has(m));
+  }
+
+  /** Volatiles in the engine's own spelling, with the turns they have left. */
+  volatilesForEngine() {
+    const names = [];
+    for (const v of this.volatiles) {
+      const upper = ENGINE_VOLATILE_ALIASES[v] ?? v.toUpperCase();
+      if (ENGINE_VOLATILES.has(upper)) names.push(upper);
+    }
+    const turns = (name, fallback) => this.volatileTurns.get(name) ?? (this.volatiles.has(name) ? fallback : 0);
+    return {
+      volatiles: names,
+      confusionTurns: turns('confusion', 2),
+      encoreTurns: turns('encore', 3),
+      lockedMoveTurns: turns('lockedmove', 2),
+      slowStartTurns: turns('slowstart', 5),
+      tauntTurns: turns('taunt', 3),
+      yawnTurns: turns('yawn', 1),
     };
   }
 }
@@ -194,6 +290,10 @@ class TrackedSide {
       toxicCount: 0,
     };
     this.teraUsed = false;
+    /** Showdown said our active can't switch (our side only). */
+    this.trapped = false;
+    /** The last thing this side did: a move id, or 'switch'. */
+    this.lastAction = null;
   }
 
   get active() { return this.team[this.activeIndex] ?? null; }
@@ -222,6 +322,38 @@ const SIDE_CONDITION_KEYS = {
   tailwind: 'tailwind',
   safeguard: 'safeguard',
 };
+
+/**
+ * Every volatile status the engine knows, in its spelling. Showdown's effect
+ * ids map onto these by uppercasing; anything not on the list is dropped, since
+ * the engine would otherwise quietly file it under "none".
+ */
+const ENGINE_VOLATILES = new Set(`
+  AQUARING ATTRACT AUTOTOMIZE BANEFULBUNKER BIDE BOUNCE BURNINGBULWARK CHARGE CONFUSION CURSE
+  DEFENSECURL DESTINYBOND DIG DISABLE DIVE ELECTRIFY ELECTROSHOT EMBARGO ENCORE ENDURE FLASHFIRE
+  FLINCH FLY FOCUSENERGY FOLLOWME FORESIGHT FREEZESHOCK GASTROACID GEOMANCY GLAIVERUSH GRUDGE
+  HEALBLOCK HELPINGHAND ICEBURN IMPRISON INGRAIN KINGSSHIELD LASERFOCUS LEECHSEED LIGHTSCREEN
+  LOCKEDMOVE MAGICCOAT MAGNETRISE MAXGUARD METEORBEAM MINIMIZE MIRACLEEYE MUSTRECHARGE NIGHTMARE
+  NORETREAT OCTOLOCK PARTIALLYTRAPPED PERISH4 PERISH3 PERISH2 PERISH1 PHANTOMFORCE POWDER
+  POWERSHIFT POWERTRICK PROTECT PROTOSYNTHESISATK PROTOSYNTHESISDEF PROTOSYNTHESISSPA
+  PROTOSYNTHESISSPD PROTOSYNTHESISSPE QUARKDRIVEATK QUARKDRIVEDEF QUARKDRIVESPA QUARKDRIVESPD
+  QUARKDRIVESPE RAGE RAGEPOWDER RAZORWIND REFLECT ROOST SALTCURE SHADOWFORCE SKULLBASH SKYATTACK
+  SKYDROP SILKTRAP SLOWSTART SMACKDOWN SNATCH SOLARBEAM SOLARBLADE SPARKLINGARIA SPIKYSHIELD
+  SPOTLIGHT STOCKPILE SUBSTITUTE SYRUPBOMB TARSHOT TAUNT TELEKINESIS THROATCHOP TRUANT TORMENT
+  TYPECHANGE UNBURDEN UPROAR YAWN
+`.trim().split(/\s+/));
+
+/** Showdown ids that don't uppercase straight onto an engine name. */
+const ENGINE_VOLATILE_ALIASES = {
+  stockpile1: 'STOCKPILE', stockpile2: 'STOCKPILE', stockpile3: 'STOCKPILE',
+  bind: 'PARTIALLYTRAPPED', wrap: 'PARTIALLYTRAPPED', firespin: 'PARTIALLYTRAPPED',
+  whirlpool: 'PARTIALLYTRAPPED', sandtomb: 'PARTIALLYTRAPPED', magmastorm: 'PARTIALLYTRAPPED',
+  infestation: 'PARTIALLYTRAPPED', snaptrap: 'PARTIALLYTRAPPED', thundercage: 'PARTIALLYTRAPPED',
+  clamp: 'PARTIALLYTRAPPED',
+};
+
+/** How long these last, in turns, from when they start. */
+const VOLATILE_LENGTH = { encore: 3, taunt: 3, confusion: 2, yawn: 1, slowstart: 5, lockedmove: 2 };
 
 /**
  * Moves whose priority depends on the field rather than the move.
@@ -390,6 +522,8 @@ export class Battle {
       case '-terastallize': return this.onTera(args);
       case '-start': return this.onVolatileStart(args);
       case '-end': return this.onVolatileEnd(args);
+      case '-prepare': return this.onPrepare(args);
+      case '-mustrecharge': return this.onMustRecharge(args);
       case '-activate': return this.onActivate(args);
       case '-transform': return true;
       case 'win': this.ended = true; this.winner = args[0]; return true;
@@ -430,6 +564,20 @@ export class Battle {
     this.evaluateTurnOrder();
     this.turn = parseInt(n, 10) || this.turn + 1;
 
+    // Count down what runs out, and count up time asleep.
+    for (const slot of ['p1', 'p2']) {
+      const mon = this.sides[slot].active;
+      if (!mon) continue;
+      for (const [name, left] of mon.volatileTurns) {
+        if (left <= 1) { mon.volatileTurns.delete(name); mon.volatiles.delete(name); }
+        else mon.volatileTurns.set(name, left - 1);
+      }
+      if (mon.status === 'slp') {
+        mon.sleepTurns += 1;
+        if (mon.restTurns > 0) mon.restTurns -= 1;
+      }
+    }
+
     // Snapshot speeds as they are at the start of the turn. Anything that
     // happens during it (a Dragon Dance, paralysis landing) must not retroactively
     // change what the order implied.
@@ -463,7 +611,12 @@ export class Battle {
     // Switching out clears boosts, volatiles and any Choice lock.
     mon.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
     mon.volatiles.clear();
+    mon.volatileTurns.clear();
     mon.choiceLockedTo = null;
+    mon.lastMove = null;
+    mon.requestDisabled.clear();
+    side.lastAction = 'switch';
+    side.trapped = false;
 
     if (hp) this.applyHp(mon, hp);
     if (cmd === 'switch') side.conditions.toxicCount = 0;
@@ -502,7 +655,10 @@ export class Battle {
 
     // A Choice item locks you in; if the item is known to be one, record it.
     if (mon.item && /^choice/.test(toId(mon.item))) mon.choiceLockedTo = id;
-    void side;
+
+    mon.lastMove = id;
+    if (side) side.lastAction = id;
+    if (id === 'rest') { mon.restTurns = 2; mon.sleepTurns = 0; }
     return true;
   }
 
@@ -809,15 +965,33 @@ export class Battle {
   onVolatileStart([ref, effect]) {
     const { mon } = this.resolve(ref);
     if (!mon) return false;
-    const name = toId(String(effect ?? '').replace(/^move:\s*/i, ''));
+    const name = toId(String(effect ?? '').replace(/^(move|ability):\s*/i, ''));
     mon.volatiles.add(name);
+    if (VOLATILE_LENGTH[name]) mon.volatileTurns.set(name, VOLATILE_LENGTH[name]);
     return true;
   }
 
   onVolatileEnd([ref, effect]) {
     const { mon } = this.resolve(ref);
     if (!mon) return false;
-    mon.volatiles.delete(toId(String(effect ?? '').replace(/^move:\s*/i, '')));
+    const name = toId(String(effect ?? '').replace(/^(move|ability):\s*/i, ''));
+    mon.volatiles.delete(name);
+    mon.volatileTurns.delete(name);
+    return true;
+  }
+
+  /** Two-turn moves: the user is in the air, underground, charging. */
+  onPrepare([ref, moveName]) {
+    const { mon } = this.resolve(ref);
+    if (!mon) return false;
+    mon.volatiles.add(toId(moveName));
+    return true;
+  }
+
+  onMustRecharge([ref]) {
+    const { mon } = this.resolve(ref);
+    if (!mon) return false;
+    mon.volatiles.add('mustrecharge');
     return true;
   }
 
@@ -830,6 +1004,28 @@ export class Battle {
       if (last) mon.choiceLockedTo = last;
     }
     return true;
+  }
+
+  /** Everything about a side's active slot the engine takes, beyond the team. */
+  slotFactsFor(side) {
+    const mon = side.active;
+    const v = mon ? mon.volatilesForEngine() : {
+      volatiles: [], confusionTurns: 0, encoreTurns: 0, lockedMoveTurns: 0,
+      slowStartTurns: 0, tauntTurns: 0, yawnTurns: 0,
+    };
+    // A fresh Substitute has a quarter of max HP. We can't see damage it takes
+    // after that, so this is an upper bound — still far better than telling the
+    // engine there is no Substitute at all.
+    let substituteHealth = 0;
+    if (mon && mon.volatiles.has('substitute')) {
+      substituteHealth = Math.max(1, Math.floor(mon.bestGuessSet().maxhp / 4));
+    }
+    return {
+      ...v,
+      substituteHealth,
+      lastUsedMove: side.lastAction === 'switch' ? 'switch' : (mon?.lastMove ?? ''),
+      forceTrapped: Boolean(side.trapped),
+    };
   }
 
   // -------------------------------------------- handing it to the engine
