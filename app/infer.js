@@ -37,7 +37,7 @@ const pick = (list, random) => list[Math.floor(random() * list.length)];
  * Everything revealed is kept as-is; the rest is drawn from whichever roles are
  * still possible.
  */
-function sampleSet(dex, mon, random) {
+function sampleSet(dex, mon, random, { teraNow = false } = {}) {
   if (!mon.data) return mon.bestGuessSet();
 
   const roles = mon.candidateRoles();
@@ -80,10 +80,14 @@ function sampleSet(dex, mon, random) {
     : mon.hpIsExact && mon.hpExact != null ? mon.hpExact
     : Math.max(1, Math.round(maxhp * mon.hpPercent / 100));
 
+  // "What if I Tera right now?" — the position as it would be after clicking
+  // it, so the search and the damage numbers both answer that question.
+  const terastallized = mon.terastallized || (teraNow && Boolean(teraType));
+
   return {
     id: mon.id,
     level: mon.level,
-    types: mon.terastallized && mon.teraType ? [toId(mon.teraType).toUpperCase()] : mon.types,
+    types: terastallized && teraType ? [teraType.toUpperCase()] : mon.types,
     hp,
     maxhp,
     ability,
@@ -91,7 +95,7 @@ function sampleSet(dex, mon, random) {
     stats,
     status: mon.status,
     teraType,
-    terastallized: mon.terastallized,
+    terastallized,
     weight: mon.data.w ?? 0,
     moves: moves.slice(0, 4),
     // Showdown's own word on our side, a worked-out Choice lock on theirs.
@@ -188,7 +192,7 @@ function fieldFrom(battle) {
  * does, so our unrevealed moves are as uncertain as theirs — sampling both keeps
  * the search honest about that instead of pretending we know.
  */
-export function sampleWorlds(dex, battle, { count = 4, seed = null } = {}) {
+export function sampleWorlds(dex, battle, { count = 4, seed = null, teraNow = false } = {}) {
   const random = makeRandom(seed ?? (battle.turn * 7919 + battle.log.length));
   const field = fieldFrom(battle);
 
@@ -196,7 +200,9 @@ export function sampleWorlds(dex, battle, { count = 4, seed = null } = {}) {
   for (let w = 0; w < count; w++) {
     const buildSide = (side) => {
       const seen = new Set(side.team.map((m) => m.id));
-      const team = side.team.map((mon) => sampleSet(dex, mon, random));
+      // Only our active can be the one we're about to Tera.
+      const team = side.team.map((mon) =>
+        sampleSet(dex, mon, random, { teraNow: teraNow && side === battle.us && mon === side.active }));
       const seenCount = team.length;
 
       // Fill the slots we haven't seen. This has to happen for *both* sides,

@@ -119,6 +119,16 @@ export class TrackedMon {
   get hasScarf() {
     return this.scarfProven || toId(this.item ?? '') === 'choicescarf';
   }
+  /**
+   * Does it have Truant? Known when the ability was revealed or confirmed, and
+   * otherwise when it's the only ability the species can have — which is
+   * Slaking, the one that matters.
+   */
+  get hasTruant() {
+    if (this.ability) return toId(this.ability) === 'truant';
+    const pool = this.data?.A ?? [];
+    return pool.length === 1 && pool[0] === 'truant';
+  }
   get types() { return this.data?.t ?? []; }
   get isKnown() { return Boolean(this.data); }
 
@@ -294,6 +304,8 @@ class TrackedSide {
     this.trapped = false;
     /** The last thing this side did: a move id, or 'switch'. */
     this.lastAction = null;
+    /** Showdown said our active can Tera right now, and into what (our side only). */
+    this.canTera = null;
   }
 
   get active() { return this.team[this.activeIndex] ?? null; }
@@ -455,6 +467,8 @@ export class Battle {
     this.trickRoomTurns = 0;
     this.ended = false;
     this.winner = null;
+    /** Ladder ratings posted after the game, by player id: { before, after, reason }. */
+    this.ratings = {};
 
     // What acted this turn and how fast each side was when it began. Both feed
     // the Scarf check, which only runs once a turn is complete.
@@ -526,6 +540,8 @@ export class Battle {
       case '-mustrecharge': return this.onMustRecharge(args);
       case '-activate': return this.onActivate(args);
       case '-transform': return true;
+      case 'cant': return this.onCant(args);
+      case 'raw': return this.onRaw(args);
       case 'win': this.ended = true; this.winner = args[0]; return true;
       case 'tie': this.ended = true; return true;
       default: return false;
@@ -659,6 +675,48 @@ export class Battle {
     mon.lastMove = id;
     if (side) side.lastAction = id;
     if (id === 'rest') { mon.restTurns = 2; mon.sleepTurns = 0; }
+
+    // Truant: having just moved, it loafs next turn. Showdown keeps this as a
+    // silent volatile that never shows in the log, so it has to be inferred
+    // from the ability. The engine models it the same way — a TRUANT volatile
+    // means "this turn is the loaf" — so this is what it needs to be told.
+    if (!calledByAnother && mon.hasTruant) mon.volatiles.add('truant');
+    return true;
+  }
+
+  /**
+   * `|cant|p2a: Slaking|ability: Truant` — it loafed, so it moves next turn.
+   *
+   * Other reasons (asleep, flinched, paralysed) leave the Truant clock where it
+   * was, which matches the simulator: a sleeping Slaking that was due to loaf
+   * still loafs when it wakes.
+   */
+  onCant([ref, reason]) {
+    const { mon } = this.resolve(ref);
+    if (!mon) return false;
+    if (/^ability:\s*truant$/i.test(String(reason ?? ''))) {
+      mon.ability = 'Truant';
+      mon.volatiles.delete('truant');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * The ladder posts each player's rating change into the room after the game:
+   * `Name's rating: 1234 &rarr; <strong>1250</strong><br />(+16 for winning)`.
+   */
+  onRaw(args) {
+    const html = args.join('|');
+    const match = /^(.+?)'s rating: (\d+) &rarr; <strong>(\d+)<\/strong>(?:<br \/>\((.*?)\))?/.exec(html);
+    if (!match) return false;
+    const name = match[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x27;/g, "'");
+    this.ratings[toId(name)] = {
+      name,
+      before: parseInt(match[2], 10),
+      after: parseInt(match[3], 10),
+      reason: match[4] ?? '',
+    };
     return true;
   }
 
@@ -1092,6 +1150,7 @@ export class Battle {
       turn: this.turn,
       ended: this.ended,
       winner: this.winner,
+      ratings: this.ratings,
       weather: this.weather,
       terrain: this.terrain,
       trickRoom: this.trickRoom,

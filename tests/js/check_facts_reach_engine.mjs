@@ -127,6 +127,63 @@ const out = await page.evaluate(async () => {
     const r = engine.search(worlds(b)[0], 2000);
     res.search = { ok: r.ours.length > 0, choices: r.ours.map((o) => o.choice) };
   }
+
+  // ---- 8. Truant: Slaking attacks, then loafs, then attacks again.
+  {
+    const b = fresh();
+    b.handle('|switch|p2a: Slaking|Slaking, L84, M|100/100');
+    const before = worlds(b)[0].theirs.volatiles;
+    b.handle('|move|p2a: Slaking|Double-Edge|p1a: Great Tusk');
+    b.handle('|turn|2');
+    const loafing = worlds(b)[0].theirs.volatiles;
+    b.handle('|cant|p2a: Slaking|ability: Truant');
+    b.handle('|turn|3');
+    const after = worlds(b)[0].theirs.volatiles;
+    res.truant = { before, loafing, after, ability: b.them.active.ability };
+    // and that a sleeping Slaking keeps its clock
+    b.handle('|move|p2a: Slaking|Double-Edge|p1a: Great Tusk');
+    b.handle('|cant|p2a: Slaking|slp');
+    res.truantKept = worlds(b)[0].theirs.volatiles.includes('TRUANT');
+  }
+
+  // ---- 9. The rating line after the game.
+  {
+    const b = fresh();
+    b.handle('|win|Us');
+    b.handle("|raw|Us's rating: 1312 &rarr; <strong>1330</strong><br />(+18 for winning)");
+    b.handle("|raw|Them's rating: 1402 &rarr; <strong>1388</strong><br />(-14 for losing)");
+    res.rating = { ended: b.ended, winner: b.winner, us: b.ratings.us, them: b.ratings.them };
+  }
+
+  // ---- 10. The Tera box: our active is Tera'd in every world, nothing else is.
+  {
+    const b = fresh();
+    b.us.active.teraType = 'Ground';
+    b.handle('|switch|p1a: Great Tusk|Great Tusk, L77, M|100/100'); // re-switch keeps it
+    b.us.active.teraType = 'Ground';
+    const plain = worlds(b)[0];
+    const tera = sampleWorlds(dex, b, { count: 1, seed: 7, teraNow: true })[0];
+    res.tera = {
+      plainTypes: plain.ours.pokemon[0].types, plainTera: plain.ours.pokemon[0].terastallized,
+      teraTypes: tera.ours.pokemon[0].types, teraTera: tera.ours.pokemon[0].terastallized,
+      theirsUntouched: !tera.theirs.pokemon[0].terastallized,
+      plainOptions: engine.options(plain), teraOptions: engine.options(tera),
+    };
+    // Damage moves with it: Headlong Rush on a Tera Ground Great Tusk gets the
+    // bigger STAB, so it has to go up and nothing of theirs should change type.
+    for (const m of ['headlongrush', 'closecombat', 'rapidspin']) {
+      if (!b.us.active.revealedMoves.has(m)) b.us.active.revealedMoves.set(m, 0);
+    }
+    const p2 = sampleWorlds(dex, b, { count: 1, seed: 7 })[0];
+    const t2 = sampleWorlds(dex, b, { count: 1, seed: 7, teraNow: true })[0];
+    const dp = engine.damage(p2), dt = engine.damage(t2);
+    const find = (d, id) => d.ours.find((m) => m.id === id);
+    res.damage = {
+      plain: find(dp, 'headlongrush'), tera: find(dt, 'headlongrush'),
+      theirMaxhp: dp.theirMaxhp, ourMaxhp: dp.ourMaxhp,
+      status: dp.theirs.map((m) => `${m.id}:${m.min}-${m.max}`),
+    };
+  }
   return res;
 });
 
@@ -138,8 +195,11 @@ const e = out.encore;
 check('Encore on us reaches the engine', e.ours.includes('ENCORE') && e.encoreTurns > 0, JSON.stringify(e.ours));
 check('the engine knows which move was last used', e.last === 'bulkup', e.last);
 check('Showdown-disabled moves are passed as disabled', e.disabled.length === 3, e.disabled.join(','));
+// Under Encore you can still Tera, so the engine rightly offers both the move
+// and the move-with-Tera — one move, two ways to click it.
+const encoredMoves = new Set(e.options.filter((c) => !isSwitch(c)).map((c) => c.replace(/-tera$/, '')));
 check('only the Encored move (and switches) remain legal',
-  e.options.filter((c) => !isSwitch(c)).length === 1 && e.options.includes('bulkup'), e.options.join(', '));
+  encoredMoves.size === 1 && encoredMoves.has('bulkup'), e.options.join(', '));
 
 check('trapped reaches the engine', out.trapped.forceTrapped === true);
 check('no switches offered when trapped', !out.trapped.options.some(isSwitch), out.trapped.options.join(', '));
@@ -158,6 +218,36 @@ console.log(`         Grimmsnarl with Encore confirmed -> ${out.roleNarrowed.joi
 
 check('Taunt is passed with turns left, then expires', out.taunt.t0 > 0 && out.taunt.gone, JSON.stringify(out.taunt));
 check('search still runs on the enriched state', out.search.ok, out.search.choices.join(', '));
+
+const t = out.truant;
+check('a fresh Slaking is not loafing', !t.before.includes('TRUANT'), JSON.stringify(t.before));
+check('after it attacks, the engine is told it loafs', t.loafing.includes('TRUANT'), JSON.stringify(t.loafing));
+check('after the loaf, it can move again', !t.after.includes('TRUANT'), JSON.stringify(t.after));
+check('the loaf line reveals the ability', t.ability === 'Truant', String(t.ability));
+check('sleeping through a loaf keeps the clock', out.truantKept === true);
+
+const r = out.rating;
+check('the rating line is read for both players',
+  r.us?.before === 1312 && r.us?.after === 1330 && r.us?.reason === '+18 for winning'
+  && r.them?.after === 1388, JSON.stringify(r));
+
+const te = out.tera;
+check('without the box, we are not Tera\'d', te.plainTera === false && te.plainTypes.length === 2, JSON.stringify(te.plainTypes));
+check('with the box, our active is Tera Ground', te.teraTera === true && te.teraTypes.join() === 'GROUND', JSON.stringify(te.teraTypes));
+check('their side is untouched by our Tera', te.theirsUntouched === true);
+check('the engine offers Tera moves before, not after',
+  te.plainOptions.some((c) => /-tera$/.test(c)) && !te.teraOptions.some((c) => /-tera$/.test(c)),
+  `${te.plainOptions.join(', ')} | ${te.teraOptions.join(', ')}`);
+
+const d = out.damage;
+check('damage numbers come back in HP', d.plain && d.plain.max > 0 && d.theirMaxhp > 0,
+  JSON.stringify(d.plain));
+check('Tera Ground makes Headlong Rush hit harder', d.tera && d.tera.max > d.plain.max,
+  `${d.plain?.max} -> ${d.tera?.max}`);
+check('the roll is 85–100%', d.plain && d.plain.min === Math.floor(d.plain.max * 0.85),
+  `${d.plain?.min}/${d.plain?.max}`);
+console.log(`         Headlong Rush vs Grimmsnarl: ${d.plain?.min}–${d.plain?.max} of ${d.theirMaxhp}, Tera Ground ${d.tera?.min}–${d.tera?.max}`);
+console.log(`         theirs: ${d.status.join(' ')}`);
 check('no page errors', errors.length === 0, errors.slice(0, 2).join(' / '));
 
 await browser.close();

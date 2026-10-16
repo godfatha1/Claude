@@ -31,6 +31,45 @@ export function check(state_json) {
 }
 
 /**
+ * Damage each active's moves would do to the other, right now.
+ *
+ * Uses the engine's own calculator, so the numbers are the same ones the
+ * search sees: items, abilities, weather, screens, boosts, Tera. Each move is
+ * run against every move the other side could pick and in both turn orders,
+ * and the spread of all of that is reported. For almost every move the spread
+ * is just the roll; for the few that depend on what the other side does
+ * (Sucker Punch, Avalanche) it widens honestly.
+ * @param {string} state_json
+ * @returns {string}
+ */
+export function damage(state_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+        const ptr0 = passStringToWasm0(state_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.damage(retptr, ptr0, len0);
+        var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+        var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        var ptr2 = r0;
+        var len2 = r1;
+        if (r3) {
+            ptr2 = 0; len2 = 0;
+            throw takeObject(r2);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_add_to_stack_pointer(16);
+        wasm.__wbindgen_export4(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * List the legal actions for a position without searching it.
  *
  * Used to render the panel immediately, before any thinking has happened, so

@@ -297,7 +297,7 @@ input[type=text]::placeholder{color:var(--fg-faint)}
 </div>
 
 <script type="module">
-import { Dex } from './app/data.js';
+import { Dex, toId } from './app/data.js';
 import { Battle } from './app/battle.js';
 import { Engine } from './app/engine.js';
 import { Advisor } from './app/advisor.js';
@@ -423,11 +423,7 @@ function stopWatching() {
 
 function think() {
   if (!battle || !advisor || thinking) return;
-  if (battle.ended) {
-    $('callMove').textContent = battle.winner ? `${battle.winner} won` : 'battle over';
-    $('callConf').textContent = ''; $('callWhy').textContent = '';
-    return;
-  }
+  if (battle.ended) { showEnd(); return; }
   if (!battle.us.active || !battle.them.active) return;
 
   thinking = true;
@@ -449,13 +445,29 @@ function think() {
   }, 0);
 }
 
+// Who won, and what it did to your rating once the ladder posts it.
+function showEnd() {
+  let text = battle.winner ? `${battle.winner} won` : 'battle over';
+  const mine = battle.ratings[toId($('nameInput').value ?? '')];
+  if (mine) {
+    const delta = mine.after - mine.before;
+    text += ` · ${mine.before} → ${mine.after} (${delta >= 0 ? '+' : ''}${delta})`;
+  }
+  $('callMove').textContent = text;
+  $('callConf').textContent = ''; $('callWhy').textContent = mine?.reason ?? '';
+}
+
 function prettyChoice(choice, action = null) {
   if (action?.unnamedSwitch) return 'Switch out';
   if (choice.startsWith('switch ')) {
     const name = choice.slice(7);
     return `Switch to ${dex.get(name)?.n ?? name}`;
   }
-  return dex.move(choice)?.name ?? choice;
+  // The engine's "use this move and Tera" option is named move-tera.
+  const tera = /-tera$/.test(choice);
+  const id = choice.replace(/-tera$/, '');
+  const name = dex.move(id)?.name ?? id;
+  return tera ? `${name} + Tera` : name;
 }
 
 function showAdvice(result) {
@@ -489,6 +501,7 @@ function showAdvice(result) {
 function render() {
   if (!battle) return;
   $('turnLabel').textContent = battle.turn ? `turn ${battle.turn}` : '';
+  if (battle.ended) showEnd();
 
   const read = readOpponent(battle);
   if (read) {

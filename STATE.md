@@ -3,9 +3,9 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.5.0
+**Version:** 0.6.0
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
-**Last updated:** 2026-10-08
+**Last updated:** 2026-10-16
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
   (published private by default — needs sharing turned on from the page's Share menu
    to be reachable without a sign-in)
@@ -170,12 +170,37 @@ wasn't being handed over:
   moves the speed numbers, a confirmed move is in every sampled set. Tap again
   to undo. Things actually witnessed are locked and can't be undone.
 
+- **Truant.** Showdown never logs the loaf as a status, only `|cant|...|ability:
+  Truant` when it happens, so the tracker works it out: a Truant Pokémon that
+  just moved loafs next turn. The engine already models it (a TRUANT volatile
+  means "this turn is the loaf"); now it's told. Known for Slaking outright,
+  since Truant is its only ability.
+- **Tera is on in the engine.** It was built with `gen9` but not the
+  `terastallization` feature, so the search never considered Tera for either
+  side — the author's own Gen 9 build (`Makefile`) uses both. Now it offers
+  "move + Tera" as its own option, named `move-tera`, and the panel shows it as
+  "Close Combat + Tera Ground". Our real Tera type comes from the request.
+- **The Tera box.** A checkbox in the panel, "Tera <type> now". Ticked, every
+  sampled world has our active already Tera'd, so the advice and the damage
+  numbers both answer "what if I click it this turn". Untick to go back.
+- **Damage numbers**, from the engine's own calculator (`engine.damage`): each
+  of our moves against their active and each of their likely moves against
+  ours, as a share of max HP, with KO / can KO marks. Run over the same sampled
+  sets as the search, so their possible items and abilities widen the range
+  honestly. Guessed moves are faded.
+- **The rating after the game.** The ladder posts `Name's rating: 1234 &rarr;
+  <strong>1250</strong>` as a `|raw|` line a moment after `|win|`; the bar
+  shows "X won · 1234 → 1250 (+16)" once it lands.
+
 `tests/js/check_facts_reach_engine.mjs` proves each one arrives and changes the
-legal options (an Encore leaves one move; trapped removes every switch).
+legal options (an Encore leaves one move; trapped removes every switch; Tera
+Ground makes Headlong Rush hit harder; Slaking loafs after attacking).
 
 ## Measured
 
-- Engine: ~43k positions/sec on mid-range phone hardware, 243 KB gzipped.
+- Engine: ~43k positions/sec on mid-range phone hardware, 256 KB gzipped
+  (Tera on). On this box a normal budget (48k positions) takes ~200 ms, deep
+  (150k) ~620 ms; the Tera box costs nothing extra.
 - Data bundle: 519 species, 954 moves, 56 KB gzipped.
 - A full turn's advice on throttled phone hardware: **4 sampled sets, 48k
   positions, 600–900 ms.** Comfortably inside a turn.
@@ -195,5 +220,12 @@ legal options (an Encore leaves one move; trapped removes every switch).
 - **Scarf recall is only lightly measured.** Precision is solid (no false claims
   in 521 turns) but random-move play rarely creates provable situations. Needs
   real ladder games.
-- **No damage numbers in the panel yet.** The engine exposes them and it's one of
-  the highest-value Tier 1 items; it just isn't wired to the UI.
+- **Damage numbers are max-roll based.** The engine's calculator returns the
+  top roll (and the top crit); the low end is taken as 85% of it, which is the
+  real roll range. Shown as a share of max HP, not current.
+- **Pushing to the phone from here.** This container can't reach the phone:
+  the Cloudflare worker that hands out the ssh host and the Access endpoints
+  behind it are blocked by the egress proxy (`cloudflared` and `paramiko` are
+  installed and useless without them). After a push, the phone picks the new
+  version up by re-running the one-line installer, or by a `git pull` in its
+  checkout if it was installed from one.

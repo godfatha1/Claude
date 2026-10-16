@@ -45,6 +45,15 @@ export class Engine {
     return JSON.parse(this.module.options(JSON.stringify(state)));
   }
 
+  /**
+   * Damage each active's moves would do to the other, from the engine's own
+   * calculator. Returns { ours, theirs, ourMaxhp, theirMaxhp } with
+   * { id, min, max, crit } per move, in HP.
+   */
+  damage(state) {
+    return JSON.parse(this.module.damage(JSON.stringify(state)));
+  }
+
   /** Check a position is well formed, so failures are loud rather than silent. */
   check(state) {
     return this.module.check(JSON.stringify(state));

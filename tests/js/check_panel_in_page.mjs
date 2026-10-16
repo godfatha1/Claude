@@ -175,7 +175,7 @@ let call = '';
 try {
   await page.waitForFunction(() => {
     const t = document.getElementById('assist-call')?.textContent ?? '';
-    return t && !/starting up|ready|reading|connected|failed/i.test(t);
+    return t && !/starting up|ready|reading|connected|failed|waiting/i.test(t);
   }, null, { timeout: 90000 });
   call = (await page.textContent('#assist-call')).trim();
   const conf = (await page.textContent('#assist-conf')).trim();

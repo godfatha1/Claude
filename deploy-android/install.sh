@@ -62,7 +62,7 @@ cat > "$HOME/.termux/boot/randbats" <<BOOT
 # Keeps the assistant up across reboots.
 termux-wake-lock
 echo \$\$ > "\$HOME/.randbats.pid"
-exec python3 "$REPO/serve.py" --port $PORT >> "\$HOME/.randbats.log" 2>&1
+exec python3 "$REPO/serve.py" --port $PORT --self-update "$BRANCH" >> "\$HOME/.randbats.log" 2>&1
 BOOT
 chmod +x "$HOME/.termux/boot/randbats"
 note "wrote $HOME/.termux/boot/randbats"
@@ -97,10 +97,12 @@ termux-wake-lock 2>/dev/null || true
 # setsid, not just nohup. Run over ssh, the whole process group goes when the
 # connection closes, and nohup alone only covers the hangup signal — the server
 # would look like it started and be gone by the time you opened the page.
+# --self-update: from then on it fetches the branch itself whenever the page
+# is opened, so a push here lands on the phone without another install.
 if command -v setsid >/dev/null; then
-  setsid python3 "$REPO/serve.py" --port "$PORT" >> "$HOME/.randbats.log" 2>&1 < /dev/null &
+  setsid python3 "$REPO/serve.py" --port "$PORT" --self-update "$BRANCH" >> "$HOME/.randbats.log" 2>&1 < /dev/null &
 else
-  nohup python3 "$REPO/serve.py" --port "$PORT" >> "$HOME/.randbats.log" 2>&1 < /dev/null &
+  nohup python3 "$REPO/serve.py" --port "$PORT" --self-update "$BRANCH" >> "$HOME/.randbats.log" 2>&1 < /dev/null &
 fi
 echo $! > "$PIDFILE"
 disown 2>/dev/null || true

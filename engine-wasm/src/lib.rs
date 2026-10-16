@@ -12,9 +12,10 @@
 use std::str::FromStr;
 use std::time::Duration;
 
-use poke_engine::choices::{Choices, MOVES};
+use poke_engine::choices::{Choice, Choices, MOVES};
 use poke_engine::engine::abilities::Abilities;
 use poke_engine::engine::items::Items;
+use poke_engine::engine::generate_instructions::calculate_both_damage_rolls;
 use poke_engine::engine::state::MoveChoice;
 use poke_engine::mcts::{perform_mcts, MctsSideResult};
 use poke_engine::pokemon::PokemonName;
@@ -135,6 +136,27 @@ struct SearchOut {
     total_visits: u32,
     /// Milliseconds the search actually took, for pacing the next one.
     elapsed_ms: u32,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MoveDamage {
+    id: String,
+    /// Lowest and highest roll, in HP, over every way the turn could go. Both
+    /// zero when the move can't do damage here (a status move, an immunity).
+    min: i16,
+    max: i16,
+    /// The highest roll if it crits.
+    crit: i16,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DamageOut {
+    ours: Vec<MoveDamage>,
+    theirs: Vec<MoveDamage>,
+    our_maxhp: i16,
+    their_maxhp: i16,
 }
 
 // ------------------------------------------------------------------ building
@@ -397,6 +419,84 @@ pub fn options(state_json: &str) -> Result<String, JsValue> {
         })
         .collect();
     serde_json::to_string(&labels).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Damage each active's moves would do to the other, right now.
+///
+/// Uses the engine's own calculator, so the numbers are the same ones the
+/// search sees: items, abilities, weather, screens, boosts, Tera. Each move is
+/// run against every move the other side could pick and in both turn orders,
+/// and the spread of all of that is reported. For almost every move the spread
+/// is just the roll; for the few that depend on what the other side does
+/// (Sucker Punch, Avalanche) it widens honestly.
+#[wasm_bindgen]
+pub fn damage(state_json: &str) -> Result<String, JsValue> {
+    let input: InState =
+        serde_json::from_str(state_json).map_err(|e| JsValue::from_str(&format!("bad state: {e}")))?;
+    let state = build_state(&input).map_err(|e| JsValue::from_str(&e))?;
+
+    let listed = |side: &InSide| -> Vec<String> {
+        let mut ids: Vec<String> = side
+            .pokemon
+            .get(side.active.min(5))
+            .map(|m| m.moves.iter().take(4).cloned().collect())
+            .unwrap_or_default();
+        // With nothing known about them, still work ours out against "nothing".
+        if ids.is_empty() {
+            ids.push(String::new());
+        }
+        ids
+    };
+    let our_ids = listed(&input.ours);
+    let their_ids = listed(&input.theirs);
+
+    let choice_of = |id: &str| -> Choice {
+        let id = Choices::from_str(id).unwrap_or(Choices::NONE);
+        MOVES.get(&id).cloned().unwrap_or_default()
+    };
+    let blank = |id: &str| MoveDamage { id: id.to_string(), min: i16::MAX, max: 0, crit: 0 };
+    let mut ours: Vec<MoveDamage> = our_ids.iter().map(|id| blank(id)).collect();
+    let mut theirs: Vec<MoveDamage> = their_ids.iter().map(|id| blank(id)).collect();
+
+    // The calculator hands back [max roll, max crit] for a damaging move, a
+    // single number for fixed damage, and nothing when it can't damage at all.
+    let fold = |into: &mut MoveDamage, rolls: Option<Vec<i16>>| match rolls.as_deref() {
+        Some([fixed]) => {
+            into.min = into.min.min(*fixed);
+            into.max = into.max.max(*fixed);
+            into.crit = into.crit.max(*fixed);
+        }
+        Some([max, crit, ..]) => {
+            let low = (*max as f32 * 0.85).floor() as i16;
+            into.min = into.min.min(low);
+            into.max = into.max.max(*max);
+            into.crit = into.crit.max(*crit);
+        }
+        _ => into.min = 0,
+    };
+
+    for (i, a) in our_ids.iter().enumerate() {
+        for (j, b) in their_ids.iter().enumerate() {
+            for first in [true, false] {
+                let (d1, d2) = calculate_both_damage_rolls(&state, choice_of(a), choice_of(b), first);
+                fold(&mut ours[i], d1);
+                fold(&mut theirs[j], d2);
+            }
+        }
+    }
+    for d in ours.iter_mut().chain(theirs.iter_mut()) {
+        if d.min == i16::MAX {
+            d.min = 0;
+        }
+    }
+
+    let out = DamageOut {
+        ours,
+        theirs,
+        our_maxhp: state.side_one.get_active_immutable().maxhp,
+        their_maxhp: state.side_two.get_active_immutable().maxhp,
+    };
+    serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Check a state is well formed, so the panel can fail loudly rather than quietly.

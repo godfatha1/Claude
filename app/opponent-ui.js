@@ -53,6 +53,7 @@ export function renderOpponent(read, dex) {
   const status = [
     read.status !== 'none' ? read.status : null,
     ...read.volatiles.filter((v) => ['substitute', 'encore', 'taunt', 'confusion', 'leechseed'].includes(v)),
+    read.volatiles.includes('truant') ? 'loafs this turn' : null,
   ].filter(Boolean);
 
   return `

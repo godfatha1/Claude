@@ -11,8 +11,8 @@
 import { Dex } from './data.js';
 import { Battle, TrackedMon } from './battle.js';
 import { Engine } from './engine.js';
-import { Advisor } from './advisor.js';
-import { readOpponent } from './infer.js';
+import { Advisor, moveIdOf, isTeraChoice } from './advisor.js';
+import { readOpponent, sampleWorlds } from './infer.js';
 import { renderOpponent, applyTap } from './opponent-ui.js';
 import { toId } from './data.js';
 
@@ -55,6 +55,12 @@ const PANEL = `
   <div class="assist-body" id="assist-body">
     <p class="assist-why" id="assist-why"></p>
     <ol class="assist-opts" id="assist-opts"></ol>
+    <label class="assist-tera" id="assist-tera-row" hidden>
+      <input type="checkbox" id="assist-tera">
+      <span id="assist-tera-text">Tera now</span>
+      <span class="hint">recomputes the damage and the advice as if you click it</span>
+    </label>
+    <div class="assist-dmg" id="assist-dmg"></div>
     <div class="assist-read" id="assist-read"></div>
     <ul class="assist-notes" id="assist-notes"></ul>
     <div class="assist-foot">
@@ -75,6 +81,8 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
 let dex = null, engine = null, advisor = null;
 let battle = null, ourName = null;
 let budget = 'normal', thinking = false, dirty = false;
+/** The Tera box: advice and damage as if we Tera this turn. */
+let teraNow = false;
 
 function setCall(text, tone = '') {
   $('assist-call').textContent = text;
@@ -155,9 +163,10 @@ function applyOwnTeam(line) {
   catch { return; }
   if (!request?.side?.pokemon) return;
 
-  // Which side are we? The request says so.
+  // Which side are we? The request says so, and so does our name.
   const slot = request.side.id; // 'p1' or 'p2'
   if (slot && battle.sides[slot]) battle.ourSlot = slot;
+  if (request.side.name) ourName = request.side.name;
 
   const ours = battle.us;
   for (const entry of request.side.pokemon) {
@@ -180,6 +189,8 @@ function applyOwnTeam(line) {
     }
     if (entry.item) mon.item = entry.item;
     if (entry.ability || entry.baseAbility) mon.ability = entry.ability || entry.baseAbility;
+    // Our real Tera type, rather than the one the set data guesses.
+    if (entry.teraType) mon.teraType = entry.teraType;
     const condition = String(entry.condition ?? '');
     const hp = /^(\d+)\/(\d+)/.exec(condition);
     if (hp) {
@@ -206,6 +217,9 @@ function applyOwnTeam(line) {
       if (id && typeof m.pp === 'number') mon.pp.set(id, m.pp);
     }
     ours.trapped = Boolean(active.trapped);
+    // Whether we can Tera right now, and into what. Gone once it's been used.
+    ours.canTera = active.canTerastallize || null;
+    if (!ours.canTera) teraNow = false;
   }
   queueThink();
 }
@@ -219,19 +233,25 @@ function queueThink() {
 
 function think() {
   if (!battle || !advisor) return;
-  if (battle.ended) {
-    setCall(battle.winner ? `${battle.winner} won` : 'battle over');
+  if (battle.ended) { showEnd(); return; }
+  if (!battle.us.active || !battle.them.active) return;
+  // Their Pokémon went down and ours didn't: nothing to decide until they
+  // bring the next one in. The engine's only answer here would be "no move".
+  if (battle.them.active.fainted && !battle.us.active.fainted) {
+    setCall('waiting for their switch', 'warn');
     $('assist-conf').textContent = '';
+    $('assist-why').textContent = '';
+    $('assist-dmg').innerHTML = '';
     return;
   }
-  if (!battle.us.active || !battle.them.active) return;
 
   thinking = true;
   $('assist-cost').dataset.thinking = 'true';
 
   setTimeout(() => {
     try {
-      const result = advisor.advise(battle, { budget });
+      showDamage();
+      const result = advisor.advise(battle, { budget, teraNow });
       if (result) show(result);
     } catch (err) {
       console.error('[assist]', err);
@@ -244,13 +264,98 @@ function think() {
   }, 0);
 }
 
+const cap = (s) => String(s).replace(/^(.)/, (c) => c.toUpperCase());
+
 function label(choice, action = null) {
   if (action?.unnamedSwitch) return 'Switch out';
   if (choice.startsWith('switch ')) {
     const name = choice.slice(7);
     return `Switch to ${dex.get(name)?.n ?? name}`;
   }
-  return dex.move(choice)?.name ?? choice;
+  const id = moveIdOf(choice);
+  const name = dex.move(id)?.name ?? id;
+  if (!isTeraChoice(choice)) return name;
+  // The engine's "use this move and Tera" option.
+  const type = battle?.us?.active?.teraType;
+  return `${name} + Tera${type ? ` ${cap(type)}` : ''}`;
+}
+
+/**
+ * The end of the game: who won, and what it did to your rating once the
+ * ladder posts it. The rating arrives a moment after the result, so this is
+ * drawn again when it does.
+ */
+function showEnd() {
+  let text = battle.winner ? `${battle.winner} won` : 'battle over';
+  const mine = ourName ? battle.ratings[toId(ourName)] : null;
+  if (mine) {
+    const delta = mine.after - mine.before;
+    text += ` · ${mine.before} → ${mine.after} (${delta >= 0 ? '+' : ''}${delta})`;
+  }
+  setCall(text);
+  $('assist-conf').textContent = '';
+  $('assist-why').textContent = mine?.reason ?? '';
+  $('assist-tera-row').hidden = true;
+}
+
+/**
+ * The damage block: what each of our moves does to them, and what each of
+ * theirs does to us, as a share of max HP. From the engine's own calculator,
+ * over the same sampled sets the search uses, so the spread of their possible
+ * items and abilities is in the range.
+ */
+function showDamage() {
+  const us = battle.us.active, them = battle.them.active;
+  const box = $('assist-dmg');
+  if (!us || !them || !engine || us.fainted || them.fainted) { box.innerHTML = ''; return; }
+
+  const worlds = sampleWorlds(dex, battle, { count: 4, teraNow });
+  const ours = new Map(), theirs = new Map();
+  const fold = (map, m, maxhp) => {
+    if (!m.id) return;
+    const lo = Math.floor(m.min / maxhp * 100), hi = Math.ceil(m.max / maxhp * 100);
+    const e = map.get(m.id) ?? { id: m.id, lo: Infinity, hi: 0 };
+    e.lo = Math.min(e.lo, lo); e.hi = Math.max(e.hi, hi);
+    map.set(m.id, e);
+  };
+  for (const w of worlds) {
+    let d;
+    try { d = engine.damage(w); } catch (err) { console.warn('[assist] damage:', err.message); continue; }
+    for (const m of d.ours) fold(ours, m, d.theirMaxhp);
+    for (const m of d.theirs) fold(theirs, m, d.ourMaxhp);
+  }
+  if (!ours.size && !theirs.size) { box.innerHTML = ''; return; }
+
+  const row = (e, targetHp, guess) => {
+    const name = dex.move(e.id)?.name ?? e.id;
+    const pct = e.hi === 0 ? '—' : e.lo === e.hi ? `${e.hi}%` : `${e.lo}–${e.hi}%`;
+    const ko = e.hi === 0 ? '' : e.lo >= targetHp ? 'KO' : e.hi >= targetHp ? 'can KO' : '';
+    return `<div class="dr ${guess ? 'guess' : ''}">
+      <span class="n">${esc(name)}</span>
+      <span class="p">${pct}${ko ? ` <em>${ko}</em>` : ''}</span>
+      <span class="b"><i style="width:${Math.min(100, e.hi)}%"></i></span>
+    </div>`;
+  };
+  const sure = new Set([...them.revealedMoves.keys()]);
+  const theirRows = [...theirs.values()]
+    .sort((a, b) => Number(sure.has(b.id)) - Number(sure.has(a.id)) || b.hi - a.hi);
+  const ourTag = teraNow && us.teraType ? ` (Tera ${cap(us.teraType)})` : '';
+
+  box.innerHTML = `
+    <div class="hd">Your moves${esc(ourTag)} → ${esc(them.speciesName)} at ${Math.round(them.hpPercent)}%</div>
+    ${[...ours.values()].map((e) => row(e, Math.round(them.hpPercent), false)).join('')}
+    <div class="hd">Their likely moves → ${esc(us.speciesName)} at ${Math.round(us.hpPercent)}%</div>
+    ${theirRows.map((e) => row(e, Math.round(us.hpPercent), !sure.has(e.id))).join('')}
+    <div class="hint">of max HP · faded rows are guesses from their set data</div>`;
+}
+
+function renderTera() {
+  const row = $('assist-tera-row');
+  const type = battle?.us?.canTera;
+  if (!type || battle.ended) { row.hidden = true; return; }
+  row.hidden = false;
+  $('assist-tera-text').textContent = `Tera ${cap(type)} now`;
+  $('assist-tera').checked = teraNow;
 }
 
 function show(result) {
@@ -280,6 +385,8 @@ function show(result) {
 
 function render() {
   if (!battle) return;
+  renderTera();
+  if (battle.ended) showEnd();
   const read = readOpponent(battle);
   if (read) $('assist-read').innerHTML = renderOpponent(read, dex);
   const notes = battle.notes.slice(-3).reverse();
@@ -305,6 +412,13 @@ async function start() {
     if (applyTap(e.target, battle.them.active)) { render(); queueThink(); }
   });
 
+  // The Tera box: everything below it is recomputed as if you click Tera.
+  $('assist-tera').addEventListener('change', (e) => {
+    teraNow = e.target.checked;
+    queueThink();
+  });
+  $('assist-tera-row').addEventListener('click', (e) => e.stopPropagation());
+
   $('assist-seg').addEventListener('click', (e) => {
     const button = e.target.closest('button');
     if (!button) return;
@@ -323,7 +437,8 @@ async function start() {
     dex = loadedDex;
     engine = loadedEngine;
     advisor = new Advisor(dex, engine);
-    window.__assist = { get battle() { return battle; }, dex, engine, advisor };
+    window.__assist = { get battle() { return battle; }, dex, engine, advisor,
+                        get teraNow() { return teraNow; } };
     setCall('ready — start a random battle');
     // Only now start reading: the backlog replays into a panel that can show it.
     watchTheConnection(handleChunk);

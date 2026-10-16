@@ -13,6 +13,13 @@ import { sampleWorlds } from './infer.js';
 import { toId } from './data.js';
 
 /**
+ * The move id inside an engine choice. The engine names "use this move and
+ * Tera" as `move-tera`; the move is the same move.
+ */
+export const moveIdOf = (choice) => choice.replace(/-tera$/, '');
+export const isTeraChoice = (choice) => /-tera$/.test(choice);
+
+/**
  * How much searching to do, by device.
  *
  * The budget is in positions, not milliseconds, so the same position gives the
@@ -40,11 +47,11 @@ export class Advisor {
    * Returns the ranked actions with a reason for each, or null if the position
    * isn't ready to search yet.
    */
-  advise(battle, { budget = 'normal' } = {}) {
+  advise(battle, { budget = 'normal', teraNow = false } = {}) {
     const plan = BUDGETS[budget] ?? BUDGETS.normal;
     if (!battle.us.active || !battle.them.active) return null;
 
-    const worlds = sampleWorlds(this.dex, battle, { count: plan.worlds });
+    const worlds = sampleWorlds(this.dex, battle, { count: plan.worlds, teraNow });
     const searched = [];
     const started = performance.now();
 
@@ -181,7 +188,7 @@ export class Advisor {
         continue;
       }
 
-      const move = this.dex.move(action.choice);
+      const move = this.dex.move(moveIdOf(action.choice));
       if (!move) continue;
 
       // Clicking into an immunity.
@@ -242,7 +249,7 @@ export class Advisor {
       const name = action.choice.replace(/^switch /, '');
       reasons.push(`going to ${name} keeps more options open than staying in`);
     } else {
-      const move = this.dex.move(action.choice);
+      const move = this.dex.move(moveIdOf(action.choice));
       const them = battle.them.active;
       if (move && them?.types?.length && move.category !== 'Status') {
         const multiplier = this.dex.effectiveness(move.type, them.types);
@@ -253,6 +260,9 @@ export class Advisor {
 
     if (battle.them.active?.scarfProven) {
       reasons.push('their Choice Scarf is accounted for');
+    }
+    if (battle.them.active?.volatiles.has('truant')) {
+      reasons.push(`${battle.them.active.speciesName} loafs this turn`);
     }
 
     void result;

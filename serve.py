@@ -38,7 +38,10 @@ import gzip
 import io
 import os
 import re
+import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -125,10 +128,46 @@ CONTENT_TYPES = {
 }
 
 
+# ---------------------------------------------------------- self-update
+#
+# The phone can't be reached from where the code is written, so it fetches the
+# code itself: each time the page is opened, if it's been a while, pull the
+# branch in the background. The panel, engine and data are read from disk per
+# request, so the next page load has them. This file is already running and
+# needs a restart to change, which the boot hook does on the next reboot.
+#
+# Only when asked (--self-update): a `git reset --hard` is the wrong thing to
+# do to a checkout someone is working in.
+
+UPDATE_EVERY = 10 * 60
+_update = {"last": 0.0, "lock": threading.Lock()}
+
+
+def maybe_update(branch: str) -> None:
+    now = time.monotonic()
+    with _update["lock"]:
+        if now - _update["last"] < UPDATE_EVERY:
+            return
+        _update["last"] = now
+
+    def run() -> None:
+        try:
+            subprocess.run(["git", "-C", str(ROOT), "fetch", "--depth", "1", "origin", branch],
+                           check=True, timeout=60, capture_output=True)
+            subprocess.run(["git", "-C", str(ROOT), "reset", "--hard", "-q", "FETCH_HEAD"],
+                           check=True, timeout=30, capture_output=True)
+        except (subprocess.SubprocessError, OSError) as err:
+            # Offline, or no git: keep serving what's here.
+            sys.stderr.write(f"update skipped: {err}\n")
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "randbats-assistant/1.0"
     protocol_version = "HTTP/1.1"
     quiet = False
+    self_update_branch: str | None = None
 
     def log_message(self, fmt, *args):
         if not self.quiet:
@@ -252,6 +291,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def route(self, method: str) -> None:
         path = urllib.parse.urlparse(self.path).path
+        if path == "/" and method == "GET" and self.self_update_branch:
+            maybe_update(self.self_update_branch)
         if path.startswith(OURS):
             if method in ("GET", "HEAD"):
                 self.serve_ours(path)
@@ -280,9 +321,13 @@ def main() -> int:
                         help="127.0.0.1 by default. Android has no host firewall, "
                              "so anything else puts this on every network you join.")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--self-update", metavar="BRANCH", default=None,
+                        help="pull this branch into the checkout when the page is opened, "
+                             "at most every ten minutes. Used on the phone.")
     args = parser.parse_args()
 
     Handler.quiet = args.quiet
+    Handler.self_update_branch = args.self_update
 
     missing = [p for p in ("app/panel.js", "engine/poke_engine_wasm_bg.wasm",
                            "data/gen9randombattle.json") if not (ROOT / p).is_file()]
