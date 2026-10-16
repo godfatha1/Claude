@@ -210,9 +210,9 @@ dl.facts dd.ok{color:var(--good)}
 <script>
 // Project state. Updated by republishing this page as the build moves.
 const STATE = {
-  version: "0.3.0",
-  status: { label: "Working end to end", tone: "live" },
-  updated: "2026-10-08",
+  version: "0.6.0",
+  status: { label: "On the phone, Tera-aware", tone: "live" },
+  updated: "2026-10-16",
   branch: "claude/pokemon-showdown-assistant-3xna06",
   format: "gen9randombattle",
 
@@ -228,17 +228,18 @@ const STATE = {
 
   kpis: [
     { lbl: "Advice per turn", val: "600–900", unit: "ms", sub: "on phone-speed hardware" },
-    { lbl: "Download", val: "299", unit: "KB", sub: "engine + set data, gzipped" },
+    { lbl: "Download", val: "312", unit: "KB", sub: "engine + set data, gzipped" },
     { lbl: "Checked against sim", val: "2,400", unit: "sets", sub: "every stat matches" },
     { lbl: "Progress", val: null, unit: "", sub: "steps complete" }
   ],
 
   facts: [
-    { k: "Runs on", v: "your phone", ok: true },
-    { k: "Search engine", v: "poke-engine, WebAssembly", ok: true },
+    { k: "Runs on", v: "your phone, in Termux", ok: true },
+    { k: "Search engine", v: "poke-engine, WebAssembly, Tera on", ok: true },
     { k: "Decision method", v: "search over 4 sampled sets" },
     { k: "Opponent stats", v: "exact", ok: true },
-    { k: "Needs a login", v: "no", ok: true },
+    { k: "Sees your own team", v: "yes — reads the client's own feed", ok: true },
+    { k: "Damage numbers", v: "engine's own, both sides", ok: true },
     { k: "Can play for you", v: "no — it only watches", ok: true },
     { k: "Language model in the loop", v: "none" },
     { k: "Anything leaves your device", v: "no", ok: true }
@@ -261,6 +262,12 @@ const STATE = {
       why: "Searches each sampled set and pools the rankings, so a move that wins big against one possibility and loses the game against another doesn't beat one that's solid against both. Then hard rules veto the obvious blunders." },
     { n: "The page", s: "done", tier: "tier 1",
       why: "Type your Showdown name, it finds your live battle and watches it. Ranked options with how much each swings depending on their set, and a reason attached to the call." },
+    { n: "On the phone, inside Showdown's own page", s: "done", tier: "tier 1",
+      why: "A small server in Termux passes Showdown through and adds the panel to their page, the same shape as PhotoFrame. Their client won't run in a frame and won't log in from another site; passed through, nothing is framed and every request is same-origin. Being in the page also means it reads the client's own feed, so your whole bench is known from turn one. It pulls its own updates when the page is opened." },
+    { n: "Everything the tracker knows reaches the engine", s: "done", tier: "tier 2",
+      why: "The engine already modelled Encore, Taunt, Substitute, trapping, Choice locks, Truant — it just wasn't being told. Now it is, with turns remaining, plus Showdown's own word on which of your moves are usable. Tap a move, item or ability in the panel to confirm it; a confirmed Choice Scarf moves the speed numbers." },
+    { n: "Tera box and damage numbers", s: "done", tier: "tier 2",
+      why: "The engine had been built without Tera switched on, so the search never considered it for either side; it does now, and offers \"move + Tera\" as its own option. A checkbox recomputes the advice and the damage as if you Tera this turn. Damage for every move on both sides comes from the engine's own calculator over the same sampled sets, so their possible items widen the range honestly. Your rating change shows after the game." },
     { n: "Strength measurement", s: "now", tier: "tier 3",
       why: "Play real games, record the rating, and check every later change head-to-head before believing it helped." }
   ]
