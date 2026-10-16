@@ -20,6 +20,13 @@ ten minutes) it fetches the branch in the background, so a push lands on the
 phone by itself. Changes to `serve.py` itself take effect on the next reboot or
 installer run.
 
+### From another machine
+
+`deploy-android/phone.sh` does the install over the same route PhotoFrame
+uses: the worker says where the phone is, `cloudflared access tcp` opens a
+tunnel to Termux's sshd, and the installer runs over ssh. Needs the ssh key
+Termux trusts, and a network that can reach the worker and Cloudflare Access.
+
 ### Or by hand
 
 ```sh
