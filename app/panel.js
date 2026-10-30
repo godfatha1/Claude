@@ -14,6 +14,7 @@ import { Engine } from './engine.js';
 import { Advisor, moveIdOf, isTeraChoice } from './advisor.js';
 import { readOpponent, sampleWorlds } from './infer.js';
 import { renderOpponent, applyTap } from './opponent-ui.js';
+import { readChat } from './chat.js';
 import { toId } from './data.js';
 
 const BASE = new URL('.', import.meta.url).href;
@@ -43,6 +44,10 @@ function watchTheConnection(onLine) {
 
 const PANEL = `
 <div class="assist" id="assist" data-open="false">
+  <div class="assist-chat" id="assist-chat" aria-live="polite">
+    <div class="them" id="assist-chat-them"></div>
+    <div class="all" id="assist-chat-all"></div>
+  </div>
   <button class="assist-bar" id="assist-bar" type="button" aria-expanded="false">
     <span class="assist-dot" id="assist-dot"></span>
     <span class="assist-call" id="assist-call">starting up</span>
@@ -83,6 +88,9 @@ let battle = null, ourName = null;
 let budget = 'normal', thinking = false, dirty = false;
 /** The Tera box: advice and damage as if we Tera this turn. */
 let teraNow = false;
+/** Chat for the strip above the bar: the opponent's lines, and everyone else's. */
+const CHAT_KEEP = 2;
+let chatThem = [], chatAll = [];
 
 function setCall(text, tone = '') {
   $('assist-call').textContent = text;
@@ -129,10 +137,20 @@ function handleChunk(chunk) {
       room = currentRoom;
       battle = new Battle(dex);
       ourName = ourName ?? findOurName();
+      chatThem = []; chatAll = [];
+      renderChat();
       setCall('reading the battle', 'warn');
       continue;
     }
     if (!battle || currentRoom !== room) continue;
+
+    const said = readChat(raw, { them: battle.them.name, us: ourName });
+    if (said) {
+      const list = said.kind === 'them' ? chatThem : chatAll;
+      list.push(said);
+      if (list.length > CHAT_KEEP) list.shift();
+      renderChat();
+    }
 
     let changed = false;
     try { changed = battle.handle(raw); }
@@ -310,6 +328,12 @@ function showDamage() {
   if (!us || !them || !engine || us.fainted || them.fainted) { box.innerHTML = ''; return; }
 
   const worlds = sampleWorlds(dex, battle, { count: 4, teraNow });
+  // Every move they could have, not only the four each sampled set happened
+  // to draw — that was why some of theirs only showed up once tapped.
+  const odds = them.moveOdds();
+  const pool = [...odds.keys()];
+  const groups = [];
+  for (let i = 0; i < pool.length; i += 4) groups.push(pool.slice(i, i + 4));
   const ours = new Map(), theirs = new Map();
   const fold = (map, m, maxhp) => {
     if (!m.id) return;
@@ -318,35 +342,83 @@ function showDamage() {
     e.lo = Math.min(e.lo, lo); e.hi = Math.max(e.hi, hi);
     map.set(m.id, e);
   };
+  // Their moves in fours, swapped into each sampled set in turn, so each one
+  // is worked out against the items and abilities they might really have.
+  const withTheirMoves = (w, group) => ({
+    ...w,
+    theirs: {
+      ...w.theirs,
+      pokemon: w.theirs.pokemon.map((p, i) => (i === w.theirs.active
+        ? { ...p, moves: group, disabled: [], pp: group.map(() => 16) } : p)),
+    },
+  });
   for (const w of worlds) {
-    let d;
-    try { d = engine.damage(w); } catch (err) { console.warn('[assist] damage:', err.message); continue; }
-    for (const m of d.ours) fold(ours, m, d.theirMaxhp);
-    for (const m of d.theirs) fold(theirs, m, d.ourMaxhp);
+    for (const group of groups.length ? groups : [null]) {
+      let d;
+      try { d = engine.damage(group ? withTheirMoves(w, group) : w); }
+      catch (err) { console.warn('[assist] damage:', err.message); continue; }
+      for (const m of d.ours) fold(ours, m, d.theirMaxhp);
+      for (const m of d.theirs) fold(theirs, m, d.ourMaxhp);
+    }
   }
   if (!ours.size && !theirs.size) { box.innerHTML = ''; return; }
 
-  const row = (e, targetHp, guess) => {
-    const name = dex.move(e.id)?.name ?? e.id;
-    const pct = e.hi === 0 ? '—' : e.lo === e.hi ? `${e.hi}%` : `${e.lo}–${e.hi}%`;
-    const ko = e.hi === 0 ? '' : e.lo >= targetHp ? 'KO' : e.hi >= targetHp ? 'can KO' : '';
-    return `<div class="dr ${guess ? 'guess' : ''}">
-      <span class="n">${esc(name)}</span>
-      <span class="p">${pct}${ko ? ` <em>${ko}</em>` : ''}</span>
+  const dmgText = (e) => (e.hi === 0 ? '—' : e.lo === e.hi ? `${e.hi}%` : `${e.lo}–${e.hi}%`);
+  const koText = (e, targetHp) => (e.hi === 0 ? '' : e.lo >= targetHp ? 'KO' : e.hi >= targetHp ? 'can KO' : '');
+  const ourRow = (e, targetHp) => {
+    const ko = koText(e, targetHp);
+    return `<div class="dr">
+      <span class="n">${esc(dex.move(e.id)?.name ?? e.id)}</span>
+      <span class="p">${dmgText(e)}${ko ? ` <em>${ko}</em>` : ''}</span>
       <span class="b"><i style="width:${Math.min(100, e.hi)}%"></i></span>
     </div>`;
   };
-  const sure = new Set([...them.revealedMoves.keys()]);
-  const theirRows = [...theirs.values()]
-    .sort((a, b) => Number(sure.has(b.id)) - Number(sure.has(a.id)) || b.hi - a.hi);
+  // Theirs: what it does to you, and for anything not seen or confirmed, how
+  // likely they are to have it at all. Tap works like the chips above.
+  const known = new Set(them.revealedMoves.keys());
+  const theirRow = (e, targetHp) => {
+    const ko = koText(e, targetHp);
+    const sure = known.has(e.id);
+    const next = them.nextMove === e.id;
+    const chance = Math.round((odds.get(e.id) ?? 0) * 100);
+    return `<button type="button" class="dr theirs ${sure ? 'sure' : 'guess'} ${next ? 'next' : ''}"
+        data-kind="move" data-id="${esc(e.id)}">
+      <span class="n">${esc(dex.move(e.id)?.name ?? e.id)}${next ? ' <i class="tag">next</i>' : ''}</span>
+      <span class="p">${dmgText(e)}${ko ? ` <em>${ko}</em>` : ''}${sure ? '' : ` <span class="odds">${chance}% likely</span>`}</span>
+      <span class="b"><i style="width:${Math.min(100, e.hi)}%"></i></span>
+    </button>`;
+  };
+  const theirRows = [...theirs.values()].sort((a, b) =>
+    Number(known.has(b.id)) - Number(known.has(a.id))
+    || (odds.get(b.id) ?? 0) - (odds.get(a.id) ?? 0)
+    || b.hi - a.hi);
   const ourTag = teraNow && us.teraType ? ` (Tera ${cap(us.teraType)})` : '';
 
   box.innerHTML = `
     <div class="hd">Your moves${esc(ourTag)} → ${esc(them.speciesName)} at ${Math.round(them.hpPercent)}%</div>
-    ${[...ours.values()].map((e) => row(e, Math.round(them.hpPercent), false)).join('')}
-    <div class="hd">Their likely moves → ${esc(us.speciesName)} at ${Math.round(us.hpPercent)}%</div>
-    ${theirRows.map((e) => row(e, Math.round(us.hpPercent), !sure.has(e.id))).join('')}
-    <div class="hint">of max HP · faded rows are guesses from their set data</div>`;
+    ${[...ours.values()].map((e) => ourRow(e, Math.round(them.hpPercent))).join('')}
+    <div class="hd">Their moves → ${esc(us.speciesName)} at ${Math.round(us.hpPercent)}%</div>
+    ${theirRows.map((e) => theirRow(e, Math.round(us.hpPercent))).join('')}
+    <div class="hint">of max HP · tap one of theirs: they have it · again: they use it next turn · again: undo</div>`;
+}
+
+/** The two chat lines above the bar: theirs on top, everyone else's under it. */
+function renderChat() {
+  const line = (m) => (m.who
+    ? `<p class="${m.kind}"><b>${esc(m.who)}:</b> ${esc(m.text)}</p>`
+    : `<p class="${m.kind}">${esc(m.text)}</p>`);
+  $('assist-chat-them').innerHTML = chatThem.map(line).join('');
+  $('assist-chat-all').innerHTML = chatAll.map(line).join('');
+  fitBody();
+}
+
+/**
+ * Keep the client's own buttons clear of the collapsed panel. Its height
+ * changes as chat comes and goes, so the page's bottom padding follows it.
+ */
+function fitBody() {
+  const h = ($('assist-chat')?.offsetHeight ?? 0) + ($('assist-bar')?.offsetHeight ?? 0);
+  if (h > 0) document.body.style.setProperty('padding-bottom', `${h + 4}px`, 'important');
 }
 
 function renderTera() {
@@ -406,11 +478,15 @@ async function start() {
     $('assist-bar').setAttribute('aria-expanded', String(open));
   });
   // Tapping a chip confirms (or un-confirms) a fact and re-runs the search.
-  $('assist-read').addEventListener('click', (e) => {
-    e.stopPropagation();
-    if (!battle?.them?.active) return;
-    if (applyTap(e.target, battle.them.active)) { render(); queueThink(); }
-  });
+  for (const id of ['assist-read', 'assist-dmg']) {
+    $(id).addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!battle?.them?.active) return;
+      if (applyTap(e.target, battle.them.active)) { render(); queueThink(); }
+    });
+  }
+  fitBody();
+  window.addEventListener('resize', fitBody);
 
   // The Tera box: everything below it is recomputed as if you click Tera.
   $('assist-tera').addEventListener('change', (e) => {
@@ -438,7 +514,8 @@ async function start() {
     engine = loadedEngine;
     advisor = new Advisor(dex, engine);
     window.__assist = { get battle() { return battle; }, dex, engine, advisor,
-                        get teraNow() { return teraNow; } };
+                        get teraNow() { return teraNow; },
+                        get chat() { return { them: chatThem, all: chatAll }; } };
     setCall('ready — start a random battle');
     // Only now start reading: the backlog replays into a panel that can show it.
     watchTheConnection(handleChunk);

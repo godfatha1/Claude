@@ -33,6 +33,7 @@ from assistant.data.dex import (  # noqa: E402
     type_chart,
 )
 from assistant.data.dex import move as get_move  # noqa: E402
+from assistant.data.fetch import load_stats  # noqa: E402
 from assistant.data.sets import SetIndex  # noqa: E402
 
 CATEGORY_CODE = {"Physical": 0, "Special": 1, "Status": 2}
@@ -42,23 +43,62 @@ FLAG_FIXED_DAMAGE = 1  # Seismic Toss, Night Shade, Dragon Rage
 FLAG_DAMAGE_CALLBACK = 2  # Counter, Super Fang, Endeavor, Ruination
 
 
+def _freqs(table: dict | None, ids: list[str]) -> list[float] | None:
+    """Frequencies lined up with a sorted id list, or None if there are none."""
+    if not table:
+        return None
+    by_id = {to_id(name): value for name, value in table.items()}
+    return [round(float(by_id.get(i, 0.0)), 3) for i in ids]
+
+
+def _role_entry(role, stats_role: dict | None) -> dict:
+    """One role, plus how often each of its options actually comes up.
+
+    The frequencies sit in arrays lined up with the sorted id lists, so they add
+    a few KB rather than repeating every name. `W` is how often the generator
+    picks this role for the species at all.
+    """
+    entry = {
+        "a": sorted(role.ability_ids),
+        "i": sorted(role.item_ids),
+        "t": sorted(role.tera_ids),
+        "m": sorted(role.move_ids),
+    }
+    if stats_role:
+        entry["W"] = round(float(stats_role.get("weight", 0.0)), 4)
+        for key, field, ids in (("mf", "moves", entry["m"]), ("if", "items", entry["i"]),
+                                ("af", "abilities", entry["a"]), ("tf", "teraTypes", entry["t"])):
+            freqs = _freqs(stats_role.get(field), ids)
+            if freqs is not None:
+                entry[key] = freqs
+    return entry
+
+
 def build(fmt: str = "gen9randombattle") -> dict:
     index = SetIndex.load(fmt)
+    try:
+        stats = {to_id(name): entry for name, entry in load_stats(fmt).items()}
+    except Exception as exc:  # the bundle still works without them, just less sharp
+        print(f"no frequency stats ({exc}); building without them", file=sys.stderr)
+        stats = {}
 
     out_species: dict[str, dict] = {}
     needed_moves: set[str] = set()
+    # Display names for abilities and items, so the panel can say "Poison
+    # Touch" rather than "poisontouch". Only the ones this format uses.
+    names: dict[str, dict[str, str]] = {"abilities": {}, "items": {}}
 
     for sets in index.all():
         sp = sets.species
+        species_stats = (stats.get(sp.id) or {}).get("roles", {})
         roles = {}
         for role in sets.roles:
-            roles[role.name] = {
-                "a": sorted(role.ability_ids),
-                "i": sorted(role.item_ids),
-                "t": sorted(role.tera_ids),
-                "m": sorted(role.move_ids),
-            }
+            roles[role.name] = _role_entry(role, species_stats.get(role.name))
             needed_moves |= role.move_ids
+            for a in role.abilities:
+                names["abilities"][to_id(a)] = a
+            for i in role.items:
+                names["items"][to_id(i)] = i
 
         out_species[sp.id] = {
             "n": sp.name,
@@ -153,6 +193,7 @@ def build(fmt: str = "gen9randombattle") -> dict:
         "types": {d: {a: v for a, v in row.items()} for d, row in type_chart().items()},
         "itemFormes": item_formes,
         "aliases": aliases,
+        "names": {k: dict(sorted(v.items())) for k, v in names.items()},
         "statOrder": list(STAT_KEYS),
     }
 

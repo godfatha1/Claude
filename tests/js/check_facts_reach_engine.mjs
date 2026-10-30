@@ -184,6 +184,128 @@ const out = await page.evaluate(async () => {
       status: dp.theirs.map((m) => `${m.id}:${m.min}-${m.max}`),
     };
   }
+
+  // ---- 11. Abilities and items named in passing land on the right Pokémon.
+  {
+    const b = fresh();
+    b.handle('|-heal|p2a: Grimmsnarl|100/100|[from] item: Leftovers');
+    const leftovers = { item: b.them.active.item, worlds: sampleWorlds(dex, b, { count: 4, seed: 1 }).map((w) => w.theirs.pokemon[0].item) };
+
+    const c = fresh();
+    c.handle('|-damage|p1a: Great Tusk|88/100|[from] item: Rocky Helmet|[of] p2a: Grimmsnarl');
+    const helmet = { theirs: c.them.active.item, ours: c.us.active.item };
+
+    // Rough Skin hits the attacker and names the holder in [of].
+    const d = fresh();
+    d.handle('|switch|p2a: Garchomp|Garchomp, L74, M|100/100');
+    d.handle('|-damage|p1a: Great Tusk|88/100|[from] ability: Rough Skin|[of] p2a: Garchomp');
+    // Volt Absorb heals the holder and names the attacker in [of].
+    const e = fresh();
+    e.handle('|switch|p2a: Lanturn|Lanturn, L89, F|100/100');
+    e.handle('|-heal|p2a: Lanturn|100/100|[from] ability: Volt Absorb|[of] p1a: Great Tusk');
+    // Weather from an ability names the holder in [of] only.
+    const f = fresh();
+    f.handle('|switch|p2a: Torkoal|Torkoal, L88, M|100/100');
+    f.handle('|-weather|SunnyDay|[from] ability: Drought|[of] p2a: Torkoal');
+    // A tapped ability gives way to the real one.
+    const g = fresh();
+    g.them.active.confirmAbility('frisk');
+    g.handle('|-ability|p2a: Grimmsnarl|Prankster');
+    // A consumed item still says what it was.
+    const h = fresh();
+    h.handle('|-enditem|p2a: Grimmsnarl|Sitrus Berry|[eat]');
+
+    res.effects = {
+      leftovers, helmet,
+      roughSkin: { garchomp: d.them.active.ability, tusk: d.us.active.ability ?? null,
+                   engine: sampleWorlds(dex, d, { count: 3, seed: 2 }).map((w) => w.theirs.pokemon[w.theirs.active].ability) },
+      voltAbsorb: { lanturn: e.them.active.ability, tusk: e.us.active.ability ?? null },
+      drought: f.them.active.ability,
+      tapThenSeen: { ability: g.them.active.ability, confirmed: g.them.active.confirmed.ability },
+      sitrus: { item: h.them.active.item, gone: h.them.active.itemKnownGone, read: readOpponent(h).itemGone,
+                engine: worlds(h)[0].theirs.pokemon[0].item },
+    };
+  }
+
+  // ---- 12. The only option is assumed, in the readout and in every world.
+  {
+    const b = fresh();
+    b.handle('|switch|p2a: Abomasnow|Abomasnow, L84, M|100/100');
+    const read = readOpponent(b);
+    res.assumed = {
+      item: read.assumedItem, ability: read.assumedAbility,
+      worldItems: [...new Set(sampleWorlds(dex, b, { count: 6, seed: 4 }).map((w) => w.theirs.pokemon[w.theirs.active].item))],
+      worldAbilities: [...new Set(sampleWorlds(dex, b, { count: 6, seed: 4 }).map((w) => w.theirs.pokemon[w.theirs.active].ability))],
+    };
+    // Proven otherwise: a different item seen replaces the assumption.
+    b.handle('|-heal|p2a: Abomasnow|100/100|[from] item: Leftovers');
+    res.assumedThenSeen = { item: readOpponent(b).item, assumed: readOpponent(b).assumedItem };
+  }
+
+  // ---- 13. Odds of each move: seen ones are certain, the rest add up to the open slots.
+  {
+    const b = fresh();
+    const fresh0 = b.them.active.moveOdds();
+    b.handle('|move|p2a: Grimmsnarl|Spirit Break|p1a: Great Tusk');
+    const after = b.them.active.moveOdds();
+    const sum = (m) => [...m.values()].reduce((a, x) => a + x, 0);
+    res.odds = {
+      freshSum: sum(fresh0), afterSum: sum(after), spiritbreak: after.get('spiritbreak'),
+      inRange: [...after.values()].every((p) => p >= 0 && p <= 1),
+      read: readOpponent(b).moveOdds,
+    };
+  }
+
+  // ---- 14. Calling their next move pins it in the search.
+  {
+    const b = fresh();
+    const mon = b.them.active;
+    const steps = [mon.cycleMove('thunderwave'), mon.cycleMove('thunderwave')];
+    const w = worlds(b)[0];
+    const r = engine.search(w, 3000);
+    const free = engine.search({ ...w, theirs: { ...w.theirs, rootMove: '' } }, 3000);
+    steps.push(mon.cycleMove('thunderwave'));
+    res.called = {
+      steps, root: w.theirs.rootMove, pinned: r.theirMovePinned,
+      theirChoices: r.theirs.map((o) => o.choice), freeChoices: free.theirs.map((o) => o.choice),
+      cleared: mon.nextMove === null && !mon.revealedMoves.has('thunderwave'),
+      inEveryWorld: sampleWorlds(dex, b, { count: 1, seed: 1 }).length === 1,
+    };
+    // A seen move goes straight to "next", and the turn ending clears it.
+    b.handle('|move|p2a: Grimmsnarl|Spirit Break|p1a: Great Tusk');
+    const seenStep = mon.cycleMove('spiritbreak');
+    b.handle('|turn|2');
+    res.called.seenStep = seenStep;
+    res.called.clearedByTurn = mon.nextMove === null;
+    // Calling a move they can't use (Choice-locked into another) isn't pinned.
+    const c = fresh();
+    c.handle('|move|p2a: Grimmsnarl|Spirit Break|p1a: Great Tusk');
+    c.them.active.confirmItem('choiceband');
+    c.them.active.choiceLockedTo = 'spiritbreak';
+    c.them.active.cycleMove('thunderwave'); c.them.active.cycleMove('thunderwave');
+    res.called.lockedPinned = engine.search(worlds(c)[0], 1500).theirMovePinned;
+  }
+
+  // ---- 15. Illusion: Zoroark-Hisui comes in looking like Muk, then breaks.
+  {
+    const b = fresh();
+    b.handle('|switch|p2a: Muk|Muk-Alola, L85, M|100/100');
+    b.handle('|-damage|p2a: Muk|80/100');
+    b.handle('|switch|p2a: Grimmsnarl|Grimmsnarl, L82, F|100/100');
+    b.handle('|switch|p2a: Muk|Muk-Alola, L85, M|71/100'); // "Muk" again: this is the disguise
+    const muk = b.them.active;
+    b.handle('|move|p2a: Muk|Focus Blast|p1a: Great Tusk');
+    b.handle('|-damage|p2a: Muk|61/100|[from] item: Life Orb');
+    b.handle('|move|p1a: Great Tusk|Headlong Rush|p2a: Muk');
+    b.handle('|-damage|p2a: Muk|20/100');
+    b.handle('|replace|p2a: Zoroark|Zoroark-Hisui, L79, M|20/100');
+    b.handle('|-end|p2a: Zoroark|Illusion');
+    const zor = b.them.active;
+    res.illusion = {
+      active: zor.speciesName, mukMoves: [...muk.revealedMoves.keys()], zorMoves: [...zor.revealedMoves.keys()],
+      mukHp: muk.hpPercent, zorHp: zor.hpPercent, mukItem: muk.item, zorItem: zor.item,
+    };
+  }
   return res;
 });
 
@@ -248,6 +370,54 @@ check('the roll is 85–100%', d.plain && d.plain.min === Math.floor(d.plain.max
   `${d.plain?.min}/${d.plain?.max}`);
 console.log(`         Headlong Rush vs Grimmsnarl: ${d.plain?.min}–${d.plain?.max} of ${d.theirMaxhp}, Tera Ground ${d.tera?.min}–${d.tera?.max}`);
 console.log(`         theirs: ${d.status.join(' ')}`);
+
+const fx = out.effects;
+check('Leftovers healing reveals Leftovers', fx.leftovers.item === 'Leftovers' && fx.leftovers.worlds.every((i) => i === 'leftovers'),
+  JSON.stringify(fx.leftovers));
+check('Rocky Helmet recoil credits the holder, not the one hit', fx.helmet.theirs === 'Rocky Helmet' && fx.helmet.ours !== 'Rocky Helmet',
+  JSON.stringify(fx.helmet));
+check('Rough Skin chip credits the holder ([of])', fx.roughSkin.garchomp === 'Rough Skin' && fx.roughSkin.tusk == null,
+  JSON.stringify(fx.roughSkin));
+check('…and the engine is given it', fx.roughSkin.engine.every((a) => a === 'roughskin'), fx.roughSkin.engine.join());
+check('Volt Absorb heal credits the healed one, not [of]', fx.voltAbsorb.lanturn === 'Volt Absorb' && fx.voltAbsorb.tusk == null,
+  JSON.stringify(fx.voltAbsorb));
+check('Drought on the weather line credits [of]', fx.drought === 'Drought', String(fx.drought));
+check('a seen ability replaces a tapped one', fx.tapThenSeen.ability === 'Prankster' && fx.tapThenSeen.confirmed === false,
+  JSON.stringify(fx.tapThenSeen));
+check('a used-up item is remembered but not given to the engine',
+  fx.sitrus.item === 'Sitrus Berry' && fx.sitrus.gone && fx.sitrus.read && fx.sitrus.engine === '', JSON.stringify(fx.sitrus));
+
+const as = out.assumed;
+check('an only-option item is assumed', as.item === 'lightclay', String(as.item));
+check('an only-option ability is assumed', as.ability === 'snowwarning', String(as.ability));
+check('…and every sampled set has them', as.worldItems.join() === 'lightclay' && as.worldAbilities.join() === 'snowwarning',
+  `${as.worldItems} / ${as.worldAbilities}`);
+check('seeing a different item drops the assumption', out.assumedThenSeen.item === 'Leftovers' && out.assumedThenSeen.assumed === null,
+  JSON.stringify(out.assumedThenSeen));
+
+const od = out.odds;
+check('move odds add up to about four before anything is seen', Math.abs(od.freshSum - 4) < 0.35, od.freshSum.toFixed(2));
+check('a seen move is certain and the total stays about four', od.spiritbreak === 1 && Math.abs(od.afterSum - 4) < 0.35,
+  `${od.spiritbreak} ${od.afterSum.toFixed(2)}`);
+check('every chance is between 0 and 1', od.inRange);
+console.log(`         Grimmsnarl after Spirit Break: ${Object.entries(od.read).map(([k, v]) => `${k} ${Math.round(v * 100)}%`).join(', ')}`);
+
+const cl = out.called;
+check('tapping a move twice: they have it, then they use it next', cl.steps.join() === 'sure,next,maybe', cl.steps.join());
+check('the called move reaches the engine', cl.root === 'thunderwave', cl.root);
+check('the search answers only that move for them',
+  cl.pinned === true && cl.theirChoices.every((c) => c.replace(/-tera$/, '') === 'thunderwave'),
+  `${cl.theirChoices.join(', ')} (free: ${cl.freeChoices.join(', ')})`);
+check('a third tap clears it', cl.cleared === true);
+check('a seen move can be called in one tap', cl.seenStep === 'next', cl.seenStep);
+check('the call lasts one turn', cl.clearedByTurn === true);
+check('a move they can\'t use isn\'t pinned', cl.lockedPinned === false);
+
+const il = out.illusion;
+check('a broken Illusion hands the moves to Zoroark', il.zorMoves.includes('focusblast') && !il.mukMoves.includes('focusblast'),
+  JSON.stringify(il));
+check('…and the disguise gets its own HP and item back', il.mukHp === 80 && il.zorHp === 20 && il.mukItem == null && il.zorItem === 'Life Orb',
+  JSON.stringify(il));
 check('no page errors', errors.length === 0, errors.slice(0, 2).join(' / '));
 
 await browser.close();

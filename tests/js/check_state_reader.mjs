@@ -11,6 +11,7 @@
 //   - species, levels and faint counts track correctly
 //   - every Choice Scarf it claims is actually a Choice Scarf
 //   - revealed moves are really in the set that used them
+//   - every ability and item it credits is one that Pokémon really had
 //
 // Usage:  node tests/js/check_state_reader.mjs [games] [ws://host:port]
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -88,13 +89,20 @@ async function playOneGame(index) {
   spy.send(`|/join ${room}`);
   await spy.wait((l) => l.startsWith('|init|battle'));
 
-  // Ground truth: each player's own request carries their real team.
+  // Ground truth: each player's own request carries their real team. Items
+  // can change hands mid-game (Trick, Knock Off), so keep every one each
+  // Pokémon was ever seen holding.
   const trueTeams = {};
+  const itemsEver = {};
   const captureTeam = (who, side) => (line) => {
     if (!line.startsWith('|request|') || line.length < 40) return;
     try {
       const parsed = JSON.parse(line.slice('|request|'.length));
       if (!parsed.side?.pokemon) return;
+      for (const p of parsed.side.pokemon) {
+        const key = `${side}|${toId(p.details.split(',')[0])}`;
+        (itemsEver[key] ??= new Set()).add(toId(p.item ?? ''));
+      }
       trueTeams[side] = parsed.side.pokemon.map((p) => ({
         ident: p.ident,
         details: p.details,
@@ -148,7 +156,7 @@ async function playOneGame(index) {
   }
 
   a.close(); b.close(); spy.close();
-  return { room, spectated, trueTeams, players: { p1: nameA, p2: nameB } };
+  return { room, spectated, trueTeams, itemsEver, players: { p1: nameA, p2: nameB } };
 }
 
 // --------------------------------------------------------------- checking
@@ -160,12 +168,16 @@ const problems = {
   falseScarf: [],
   missedScarf: [],
   phantomMove: [],
+  wrongAbility: [],
+  wrongItem: [],
   engineState: [],
 };
 const stats = {
   games: 0, lines: 0, turns: 0,
   scarfsFound: 0, scarfsReal: 0,
   realScarfHoldersSeen: 0,
+  abilitiesCredited: 0,
+  itemsCredited: 0,
   // A guard that only ever says "no" is worthless, so measure the other side:
   // how often was the order actually there to be read?
   detectableOpportunities: 0,
@@ -238,11 +250,32 @@ function verify(game) {
         }
       }
 
+      // Abilities and items it credited — from their own lines or from a
+      // "[from]" tag on someone else's — must be the real ones.
+      if (mon.ability) {
+        stats.abilitiesCredited += 1;
+        const real = [match.baseAbility, match.ability].filter(Boolean).map(toId);
+        if (!real.includes(toId(mon.ability))) {
+          problems.wrongAbility.push(`${game.room} ${slot}: ${mon.speciesName} credited with ${mon.ability}, really ${real.join('/')}`);
+        }
+      }
+      if (mon.item && !mon.scarfProven) {
+        stats.itemsCredited += 1;
+        const ever = game.itemsEver?.[`${slot}|${toId(match.details.split(',')[0])}`] ?? new Set();
+        if (!ever.has(toId(mon.item))) {
+          problems.wrongItem.push(`${game.room} ${slot}: ${mon.speciesName} credited with ${mon.item}, held ${[...ever].join('/') || 'nothing'}`);
+        }
+      }
+
       // Revealed moves must really be in its set.
       const realMoves = new Set((match.moves ?? []).map(toId));
       for (const moveId of mon.revealedMoves.keys()) {
         if (realMoves.size && !realMoves.has(moveId)) {
-          problems.phantomMove.push(`${game.room} ${slot}: ${mon.speciesName} credited with ${moveId}, set has ${[...realMoves].join(',')}`);
+          // Show where it came from: the line, and a few before it.
+          const at = game.spectated.findIndex((l) => l.startsWith('|move|') && toId(l.split('|')[3] ?? '') === moveId);
+          const context = at >= 0 ? game.spectated.slice(Math.max(0, at - 4), at + 2).join('\n            ') : '';
+          problems.phantomMove.push(`${game.room} ${slot}: ${mon.speciesName} credited with ${moveId}, set has ${[...realMoves].join(',')}`
+            + (context ? `\n            ${context}` : ''));
         }
       }
     }
@@ -375,12 +408,15 @@ report('every tracked species was really on that team', problems.species);
 report('faint counts stay within the team', problems.faints);
 report('no revealed move the set does not have', problems.phantomMove);
 report('every claimed Choice Scarf is real', problems.falseScarf);
+report('every ability it credits is the real one', problems.wrongAbility);
+report('every item it credits is one it really held', problems.wrongItem);
 report('engine state is well formed', problems.engineState);
 
 console.log(`\n  real Choice Scarf holders seen active : ${stats.realScarfHoldersSeen}`);
 console.log(`  turns where the order gave it away   : ${stats.detectableOpportunities}`);
 console.log(`  of those, the reader caught          : ${stats.opportunitiesCaught}`);
 console.log(`  Scarfs claimed: ${stats.scarfsFound}, of which real: ${stats.scarfsReal}`);
+console.log(`  abilities credited: ${stats.abilitiesCredited}, items credited: ${stats.itemsCredited}`);
 if (stats.detectableOpportunities > 0 && stats.opportunitiesCaught === 0) {
   console.log('\n  WARNING: the order gave away a Scarf and the reader said nothing.');
   console.log('           The guards are too strict to be useful.');

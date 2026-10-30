@@ -3,9 +3,9 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.6.0
+**Version:** 0.7.0
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
-**Last updated:** 2026-10-16
+**Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
   (published private by default — needs sharing turned on from the page's Share menu
    to be reachable without a sign-in)
@@ -192,16 +192,56 @@ wasn't being handed over:
   <strong>1250</strong>` as a `|raw|` line a moment after `|win|`; the bar
   shows "X won · 1234 → 1250 (+16)" once it lands.
 
+- **Odds, from the real generator.** The bundle now carries pkmn's per-role
+  counts (`data/stats/gen9randombattle.json`): how often each role is picked
+  and how often each move, item, ability and Tera type comes up in it. The
+  panel shows "Knock Off 68%"; seen and confirmed moves just show damage.
+  Role odds update on what's seen (a role that runs Band half the time is half
+  as likely once Leftovers shows).
+- **The sampler follows those odds.** This is the one change to how the
+  recommender builds its guesses: roles, moves, items, abilities and Tera are
+  drawn by real frequency instead of evenly, and moves a role always has always
+  go in. Same odds the panel shows, so the two can't disagree.
+- **Only option = assumed.** If every set it could be running has the same
+  item or ability, it's treated as known (chip says "only option") until
+  something else is seen. 231 species have a single item.
+- **Revealed in passing.** `[from] item: Leftovers` on a heal, `[from] ability:
+  Rough Skin|[of] ...` on chip damage, `[from] ability: Drought` on weather,
+  `-enditem` for a used berry. Who gets credited depends on the line (Rough
+  Skin names the holder in `[of]`, Volt Absorb names the attacker there), so
+  each kind of line says who to try first and the species' ability pool
+  settles it. Checked on real games: every credited ability and item matched.
+- **Calling their next move.** Tap a move of theirs once: they have it. Again:
+  "they use this next turn" — the search then only lets them pick that move
+  (with or without Tera) at the first turn, so our ranking is the best answer
+  to it. Clears when the turn ends. If the move isn't usable for them (Choice
+  lock), it says so instead of pretending.
+- **Illusion.** Zoroark coming in disguised used to get its moves, items and a
+  possible "proven Scarf" pinned on the disguise. On `|replace|` all of that is
+  handed back. Likely the cause of the one false Scarf claim never reproduced.
+
 `tests/js/check_facts_reach_engine.mjs` proves each one arrives and changes the
 legal options (an Encore leaves one move; trapped removes every switch; Tera
-Ground makes Headlong Rush hit harder; Slaking loafs after attacking).
+Ground makes Headlong Rush hit harder; Slaking loafs after attacking; a called
+move is the only one the search lets them use).
+
+## The panel, top to bottom (collapsed)
+
+1. Their chat (red edge), last two lines.
+2. Everything else said: you, spectators, the timer, the rating line.
+3. The bar: the call and how sure.
+
+The page's bottom padding follows that height so the client's own buttons stay
+clear. The local test server won't let guests chat in battles, so the in-page
+test feeds chat lines through the same early hook real traffic uses;
+`tests/js/check_chat.mjs` covers the parsing.
 
 ## Measured
 
 - Engine: ~43k positions/sec on mid-range phone hardware, 256 KB gzipped
   (Tera on). On this box a normal budget (48k positions) takes ~200 ms, deep
   (150k) ~620 ms; the Tera box costs nothing extra.
-- Data bundle: 519 species, 954 moves, 56 KB gzipped.
+- Data bundle: 519 species, 954 moves, 74 KB gzipped (with odds and names).
 - A full turn's advice on throttled phone hardware: **4 sampled sets, 48k
   positions, 600–900 ms.** Comfortably inside a turn.
 - Choice Scarf check: no false claims across 40 real games and 521 turns.
@@ -212,9 +252,9 @@ Ground makes Headlong Rush hit harder; Slaking loafs after attacking).
   and names every teammate from turn one. Still a limitation on the Pages
   version, which watches from outside.
 - **One false Choice Scarf claim seen once**, in a batch of real games, and not
-  reproducible in ~570 games since. The test now saves the whole game to
-  `tests/js/false-scarfs/` when it happens, so the next one can be fixed with
-  facts rather than guesses.
+  reproducible in ~570 games since. Most likely Illusion (a fast Zoroark
+  looking like something slow), now handled. The test still saves any false
+  claim to `tests/js/false-scarfs/`.
 - **Unseen bench generation** is the known weak point in every randbats bot, ours
   included. Sampled uniformly from the roster, which is at least unbiased.
 - **Scarf recall is only lightly measured.** Precision is solid (no false claims

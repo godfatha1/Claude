@@ -31,6 +31,37 @@ function makeRandom(seed) {
 
 const pick = (list, random) => list[Math.floor(random() * list.length)];
 
+/** Pick from a list by weight. Falls back to an even pick without weights. */
+function pickWeighted(list, weights, random) {
+  if (!list.length) return undefined;
+  if (!weights || weights.length !== list.length) return pick(list, random);
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (!(total > 0)) return pick(list, random);
+  let r = random() * total;
+  for (let i = 0; i < list.length; i++) { r -= weights[i]; if (r <= 0) return list[i]; }
+  return list[list.length - 1];
+}
+
+/**
+ * Fill the open move slots the way the generator would: moves the role always
+ * has go in first, the rest are drawn by how often they actually turn up.
+ */
+function fillMoves(role, known, random) {
+  const moves = [...known];
+  if (!role) return moves;
+  // Without counts, four picked evenly from the pool.
+  const f = (m) => (role.mf ? role.mf[role.m.indexOf(m)] : Math.min(1, 4 / role.m.length));
+  const open = role.m.filter((m) => !moves.includes(m));
+  for (const m of open.filter((m) => f(m) >= 0.999)) { if (moves.length < 4) moves.push(m); }
+  let rest = open.filter((m) => f(m) < 0.999);
+  while (moves.length < 4 && rest.length) {
+    const m = pickWeighted(rest, rest.map(f), random);
+    moves.push(m);
+    rest = rest.filter((x) => x !== m);
+  }
+  return moves;
+}
+
 /**
  * One self-consistent guess at a Pokémon's set.
  *
@@ -40,39 +71,35 @@ const pick = (list, random) => list[Math.floor(random() * list.length)];
 function sampleSet(dex, mon, random, { teraNow = false } = {}) {
   if (!mon.data) return mon.bestGuessSet();
 
-  const roles = mon.candidateRoles();
-  const role = roles.length ? pick(roles, random) : null;
+  // Which set it's running, weighted by how often each one comes up and how
+  // well it fits what's been seen — the same odds the panel shows.
+  const odds = mon.roleOdds();
+  const role = odds.length ? pickWeighted(odds.map((o) => o.role), odds.map((o) => o.p), random) : null;
 
-  // Revealed moves are facts. Fill the rest from the role's pool, at random so
-  // different worlds explore different sets.
-  const moves = [...mon.revealedMoves.keys()];
-  if (role) {
-    const rest = role.m.filter((m) => !moves.includes(m));
-    // Shuffle so we aren't always padding with the same ones.
-    for (let i = rest.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [rest[i], rest[j]] = [rest[j], rest[i]];
-    }
-    for (const m of rest) {
-      if (moves.length >= 4) break;
-      moves.push(m);
-    }
-  }
+  // Seen and confirmed moves are facts. A move you've called for this turn
+  // goes first so it can never be the one cut when there are more than four.
+  const known = [...mon.revealedMoves.keys()];
+  if (mon.nextMove) known.sort((a, b) => (b === mon.nextMove) - (a === mon.nextMove));
+  const moves = fillMoves(role, known, random);
 
-  // A proven or confirmed Scarf beats anything the role pool says.
+  // Seen or confirmed beats the pool; so does a proven Scarf, and so does an
+  // item that's the only one any of its sets carry.
   let item;
   if (mon.itemKnownGone) item = '';
   else if (mon.item) item = toId(mon.item);
   else if (mon.hasScarf) item = 'choicescarf';
-  else item = toId(pick(role?.i?.length ? role.i : (mon.data.I ?? ['']), random) ?? '');
+  else if (role?.i?.length) item = toId(pickWeighted(role.i, role.if, random));
+  else item = toId(pick(mon.data.I?.length ? mon.data.I : [''], random) ?? '');
 
   const ability = mon.ability
     ? toId(mon.ability)
-    : toId(pick(role?.a?.length ? role.a : (mon.data.A ?? ['']), random) ?? '');
+    : role?.a?.length
+      ? toId(pickWeighted(role.a, role.af, random))
+      : toId(pick(mon.data.A?.length ? mon.data.A : [''], random) ?? '');
 
   const teraType = mon.teraType
     ? toId(mon.teraType)
-    : toId(pick(role?.t?.length ? role.t : [''], random) ?? '');
+    : toId((role?.t?.length ? pickWeighted(role.t, role.tf, random) : '') ?? '');
 
   const stats = statsFor(dex, mon.data, mon.id, mon.level, ability, item, moves);
   const maxhp = stats[0];
@@ -240,7 +267,11 @@ export function sampleWorlds(dex, battle, { count = 4, seed = null, teraNow = fa
 
     worlds.push({
       ours: { ...ours, boosts: field.ourBoosts, ...field.ourConditions, ...ourSlot },
-      theirs: { ...theirs, boosts: field.theirBoosts, ...field.theirConditions, ...theirSlot },
+      theirs: {
+        ...theirs, boosts: field.theirBoosts, ...field.theirConditions, ...theirSlot,
+        // The move you've called for them: the search answers it directly.
+        rootMove: battle.them.active?.nextMove ?? '',
+      },
       // Carried alongside so the panel knows which switches it may name.
       seenOurs: new Set(battle.us.team.map((m) => m.id)),
       weather: field.weather,
@@ -273,6 +304,11 @@ export function readOpponent(battle) {
     .filter(([id, count]) => count > 0 || !mon.confirmed.moves.has(id))
     .map(([id]) => id);
 
+  const moveOdds = mon.moveOdds();
+  const itemOdds = mon.itemOdds();
+  const abilityOdds = mon.abilityOdds();
+  const toObject = (map) => Object.fromEntries([...map].map(([k, v]) => [k, Math.round(v * 100) / 100]));
+
   return {
     species: mon.speciesName,
     level: mon.level,
@@ -283,18 +319,33 @@ export function readOpponent(battle) {
     roles: roles.map((r) => r.name),
     pinned: roles.length === 1,
     item: mon.item,
+    itemGone: mon.itemKnownGone,
+    // The only item / ability any of its possible sets has: taken as known
+    // until something says otherwise.
+    assumedItem: mon.assumedItem,
+    assumedAbility: mon.assumedAbility,
+    // Chance of each, 0–1.
+    moveOdds: toObject(moveOdds),
+    itemOdds: toObject(itemOdds),
+    abilityOdds: toObject(abilityOdds),
+    // The move you've called for this turn.
+    nextMove: mon.nextMove,
     itemConfirmed: mon.confirmed.item,
     itemSeen: Boolean(mon.item) && !mon.confirmed.item,
     scarfProven: mon.scarfProven,
-    possibleItems: mon.item ? [toId(mon.item)] : [...itemPool],
+    possibleItems: mon.item ? [toId(mon.item)]
+      : [...itemPool].sort((a, b) => (itemOdds.get(b) ?? 0) - (itemOdds.get(a) ?? 0)),
     ability: mon.ability,
     abilityConfirmed: mon.confirmed.ability,
     abilitySeen: Boolean(mon.ability) && !mon.confirmed.ability,
-    possibleAbilities: mon.ability ? [toId(mon.ability)] : [...abilityPool],
+    possibleAbilities: mon.ability ? [toId(mon.ability)]
+      : [...abilityPool].sort((a, b) => (abilityOdds.get(b) ?? 0) - (abilityOdds.get(a) ?? 0)),
     speed: range ? (range.min === range.max ? `${range.max}` : `${range.min}–${range.max}`) : null,
     volatiles: [...mon.volatiles],
     // Moves it could still be holding that we haven't seen or confirmed.
+    // Likeliest first.
     unseenMoves: [...new Set(roles.flatMap((r) => r.m))]
-      .filter((m) => !mon.revealedMoves.has(m)),
+      .filter((m) => !mon.revealedMoves.has(m))
+      .sort((a, b) => (moveOdds.get(b) ?? 0) - (moveOdds.get(a) ?? 0)),
   };
 }

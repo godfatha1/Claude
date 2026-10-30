@@ -70,6 +70,8 @@ export class Advisor {
     const guarded = this.applyGuards(named, battle);
     const result = {
       actions: guarded,
+      // The move you called for them, if the search could pin it.
+      theirMove: searched.some((r) => r.theirMovePinned) ? battle.them.active?.nextMove ?? null : null,
       worlds: searched.length,
       positions: searched.reduce((sum, r) => sum + (r.totalVisits ?? 0), 0),
       elapsedMs: Math.round(performance.now() - started),
@@ -264,8 +266,12 @@ export class Advisor {
     if (battle.them.active?.volatiles.has('truant')) {
       reasons.push(`${battle.them.active.speciesName} loafs this turn`);
     }
+    if (result?.theirMove) {
+      reasons.push(`assuming they use ${this.dex.move(result.theirMove)?.name ?? result.theirMove}`);
+    } else if (battle.them.active?.nextMove) {
+      reasons.push(`couldn't assume ${this.dex.move(battle.them.active.nextMove)?.name ?? battle.them.active.nextMove} — it isn't usable for them right now`);
+    }
 
-    void result;
     return reasons.join(', ');
   }
 }

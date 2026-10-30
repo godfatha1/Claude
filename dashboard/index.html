@@ -210,9 +210,9 @@ dl.facts dd.ok{color:var(--good)}
 <script>
 // Project state. Updated by republishing this page as the build moves.
 const STATE = {
-  version: "0.6.0",
-  status: { label: "On the phone, Tera-aware", tone: "live" },
-  updated: "2026-10-16",
+  version: "0.7.0",
+  status: { label: "Reads odds, takes your calls", tone: "live" },
+  updated: "2026-10-30",
   branch: "claude/pokemon-showdown-assistant-3xna06",
   format: "gen9randombattle",
 
@@ -228,7 +228,7 @@ const STATE = {
 
   kpis: [
     { lbl: "Advice per turn", val: "600–900", unit: "ms", sub: "on phone-speed hardware" },
-    { lbl: "Download", val: "312", unit: "KB", sub: "engine + set data, gzipped" },
+    { lbl: "Download", val: "331", unit: "KB", sub: "engine + set data, gzipped" },
     { lbl: "Checked against sim", val: "2,400", unit: "sets", sub: "every stat matches" },
     { lbl: "Progress", val: null, unit: "", sub: "steps complete" }
   ],
@@ -268,6 +268,8 @@ const STATE = {
       why: "The engine already modelled Encore, Taunt, Substitute, trapping, Choice locks, Truant — it just wasn't being told. Now it is, with turns remaining, plus Showdown's own word on which of your moves are usable. Tap a move, item or ability in the panel to confirm it; a confirmed Choice Scarf moves the speed numbers." },
     { n: "Tera box and damage numbers", s: "done", tier: "tier 2",
       why: "The engine had been built without Tera switched on, so the search never considered it for either side; it does now, and offers \"move + Tera\" as its own option. A checkbox recomputes the advice and the damage as if you Tera this turn. Damage for every move on both sides comes from the engine's own calculator over the same sampled sets, so their possible items widen the range honestly. Your rating change shows after the game." },
+    { n: "Odds, assumptions, and calling their move", s: "done", tier: "tier 2",
+      why: "Every move they could have is listed with the damage it does to you and how likely they are to have it, from pkmn's counts of what the generator actually produces. The recommender samples from the same odds. An item or ability that's their only option is assumed until shown otherwise; ones revealed in passing (Leftovers healing, Rough Skin chip) are credited to the right side — checked against real games. Tap one of their moves twice to say they'll use it next turn and the search answers that move. Chat sits above the bar, theirs on top." },
     { n: "Strength measurement", s: "now", tier: "tier 3",
       why: "Play real games, record the rating, and check every later change head-to-head before believing it helped." }
   ]

@@ -99,6 +99,11 @@ struct InSide {
     last_used_move: String,
     /// Showdown has told us this Pokémon cannot switch out.
     force_trapped: bool,
+    /// "Assume this side uses this move this turn" — a move id, or "". Used
+    /// when you've called what they'll click: the search then only considers
+    /// that move (with or without Tera) for them at the first turn, which makes
+    /// our ranking the best answer to it. Ignored if the move isn't legal.
+    root_move: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -136,6 +141,8 @@ struct SearchOut {
     total_visits: u32,
     /// Milliseconds the search actually took, for pacing the next one.
     elapsed_ms: u32,
+    /// True when their first move was pinned to `root_move`.
+    their_move_pinned: bool,
 }
 
 #[derive(Serialize)]
@@ -373,7 +380,27 @@ pub fn search(state_json: &str, duration_ms: u32, iterations: u32) -> Result<Str
         serde_json::from_str(state_json).map_err(|e| JsValue::from_str(&format!("bad state: {e}")))?;
     let mut state = build_state(&input).map_err(|e| JsValue::from_str(&e))?;
 
-    let (ours, theirs) = state.root_get_all_options();
+    let (ours, mut theirs) = state.root_get_all_options();
+
+    // Pin their first move if you've called it. Both the plain move and the
+    // move-with-Tera stay in, since calling the move says nothing about Tera.
+    let mut their_move_pinned = false;
+    if !input.theirs.root_move.is_empty() {
+        let wanted = input.theirs.root_move.as_str();
+        let pinned: Vec<MoveChoice> = theirs
+            .iter()
+            .filter(|c| {
+                let name = c.to_string(&state.side_two);
+                matches!(c, MoveChoice::Move(_) | MoveChoice::MoveTera(_))
+                    && name.trim_end_matches("-tera") == wanted
+            })
+            .cloned()
+            .collect();
+        if !pinned.is_empty() {
+            theirs = pinned;
+            their_move_pinned = true;
+        }
+    }
 
     // Nothing to decide, so don't spend the battery proving it.
     let iters = if ours.len() <= 1 { 100 } else { iterations };
@@ -397,6 +424,7 @@ pub fn search(state_json: &str, duration_ms: u32, iterations: u32) -> Result<Str
         theirs: rank(&state.side_two, &result.s2, total),
         total_visits: total,
         elapsed_ms: started.elapsed().as_millis() as u32,
+        their_move_pinned,
     };
     serde_json::to_string(&out).map_err(|e| JsValue::from_str(&e.to_string()))
 }

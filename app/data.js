@@ -34,6 +34,7 @@ export class Dex {
     this.format = bundle.format;
     this.species = bundle.species;
     this.moves = bundle.moves;
+    this.names = bundle.names ?? { abilities: {}, items: {} };
     this.types = bundle.types;
     this.aliases = bundle.aliases;
     this.itemFormes = bundle.itemFormes;

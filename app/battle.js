@@ -62,6 +62,10 @@ export class TrackedMon {
     this.requestDisabled = new Set();
     this.pp = new Map();
 
+    // The move you've called for them this turn: "I think they'll click this".
+    // Cleared when the turn ends or they switch.
+    this.nextMove = null;
+
     // Set when turn order proves it must be holding a Choice Scarf.
     this.scarfProven = false;
     // Move ids the last Choice lock rules out.
@@ -84,6 +88,126 @@ export class TrackedMon {
     this.confirmed.moves.add(id);
     if (!this.revealedMoves.has(id)) this.revealedMoves.set(id, 0);
     return true;
+  }
+
+  /**
+   * One tap on a move, cycling through what you can say about it:
+   *
+   *   not seen:  maybe -> they have it -> they'll use it next turn -> maybe
+   *   seen:      seen  -> they'll use it next turn -> seen
+   *
+   * Calling the next move implies they have it, so it's only offered once the
+   * move is confirmed or seen. Returns the new state.
+   */
+  cycleMove(moveName) {
+    const id = toId(moveName);
+    const seen = (this.revealedMoves.get(id) ?? 0) > 0;
+    if (seen) {
+      this.nextMove = this.nextMove === id ? null : id;
+      return this.nextMove ? 'next' : 'seen';
+    }
+    if (!this.confirmed.moves.has(id)) { this.confirmMove(id); return 'sure'; }
+    if (this.nextMove !== id) { this.nextMove = id; return 'next'; }
+    this.nextMove = null;
+    this.confirmMove(id); // second call undoes it
+    return 'maybe';
+  }
+
+  /**
+   * How likely each still-possible role is, given everything known.
+   *
+   * Starts from how often the generator picks each role, then weighs it by how
+   * well it explains what's been seen: a role that runs Choice Band half the
+   * time is half as likely once Leftovers shows up. Falls back to an even split
+   * where the data has no frequencies.
+   */
+  roleOdds() {
+    const roles = this.candidateRoles();
+    if (!roles.length) return [];
+    const known = [...this.revealedMoves.keys()];
+    const item = this.item ? toId(this.item) : null;
+    const ability = this.ability ? toId(this.ability) : null;
+    const tera = this.teraType ? toId(this.teraType) : null;
+    const freq = (ids, freqs, id) => {
+      const at = ids.indexOf(id);
+      if (at < 0) return ids.length ? 0.02 : 1; // pools are sampled; never zero
+      return freqs ? Math.max(0.02, freqs[at]) : 1 / ids.length;
+    };
+    const weighed = roles.map((role) => {
+      let w = role.W ?? 1 / roles.length;
+      for (const m of known) w *= role.mf ? freq(role.m, role.mf, m) : 1;
+      if (item) w *= freq(role.i, role.if, item);
+      if (ability) w *= freq(role.a, role.af, ability);
+      if (tera && role.t.length) w *= freq(role.t, role.tf, tera);
+      return { role, w };
+    });
+    const total = weighed.reduce((sum, r) => sum + r.w, 0);
+    return weighed.map(({ role, w }) => ({ role, p: total > 0 ? w / total : 1 / roles.length }));
+  }
+
+  /**
+   * The chance of each move being in its set, from 0 to 1. Seen or confirmed
+   * moves are 1. For the rest: the open slots, shared out by how often each
+   * move turns up in the role, summed over the roles it could be.
+   */
+  moveOdds() {
+    const out = new Map();
+    const known = new Set(this.revealedMoves.keys());
+    for (const id of known) out.set(id, 1);
+    for (const { role, p } of this.roleOdds()) {
+      const open = role.m.filter((m) => !known.has(m));
+      // Without counts, assume four picked evenly from the pool.
+      const f = (m) => (role.mf ? role.mf[role.m.indexOf(m)] : Math.min(1, 4 / role.m.length));
+      let slots = Math.max(0, 4 - [...known].filter((m) => role.m.includes(m)).length);
+      // Moves the role always has fill their slots first; the rest share what's left.
+      const always = open.filter((m) => f(m) >= 0.999);
+      const rest = open.filter((m) => f(m) < 0.999);
+      for (const m of always) out.set(m, (out.get(m) ?? 0) + p * (slots > 0 ? 1 : 0));
+      slots = Math.max(0, slots - always.length);
+      const spread = rest.reduce((sum, m) => sum + f(m), 0);
+      for (const m of rest) {
+        const chance = spread > 0 ? Math.min(1, slots * f(m) / spread) : 0;
+        out.set(m, (out.get(m) ?? 0) + p * chance);
+      }
+    }
+    return out;
+  }
+
+  /** The chance of each item, summed over the roles it could be. */
+  itemOdds() {
+    if (this.item && !this.itemKnownGone) return new Map([[toId(this.item), 1]]);
+    return this.optionOdds('i', 'if');
+  }
+
+  abilityOdds() {
+    if (this.ability) return new Map([[toId(this.ability), 1]]);
+    return this.optionOdds('a', 'af');
+  }
+
+  optionOdds(key, freqKey) {
+    const out = new Map();
+    for (const { role, p } of this.roleOdds()) {
+      const ids = role[key] ?? [];
+      const freqs = role[freqKey];
+      ids.forEach((id, i) => out.set(id, (out.get(id) ?? 0) + p * (freqs ? freqs[i] : 1 / ids.length)));
+    }
+    return out;
+  }
+
+  /**
+   * When every set it could be running has the same ability, it has that
+   * ability — so treat it as known until something shows otherwise. Null when
+   * the ability is actually known, or when there's more than one possibility.
+   */
+  get assumedAbility() {
+    if (this.ability) return null;
+    return onlyOne(this.candidateRoles().flatMap((r) => r.a));
+  }
+
+  /** Same for the item. */
+  get assumedItem() {
+    if (this.item || this.itemKnownGone) return null;
+    return onlyOne(this.candidateRoles().flatMap((r) => r.i));
   }
 
   /** Mark the item, on your say-so. Tap the same one again to undo. */
@@ -115,9 +239,10 @@ export class TrackedMon {
     return true;
   }
 
-  /** Is it holding a Choice Scarf, by proof or by your confirmation? */
+  /** Is it holding a Choice Scarf: proven, confirmed, seen, or its only option? */
   get hasScarf() {
-    return this.scarfProven || toId(this.item ?? '') === 'choicescarf';
+    if (this.itemKnownGone) return false; // knocked off or tricked away
+    return this.scarfProven || toId(this.item ?? this.assumedItem ?? '') === 'choicescarf';
   }
   /**
    * Does it have Truant? Known when the ability was revealed or confirmed, and
@@ -125,9 +250,17 @@ export class TrackedMon {
    * Slaking, the one that matters.
    */
   get hasTruant() {
-    if (this.ability) return toId(this.ability) === 'truant';
+    const ability = this.ability ?? this.assumedAbility;
+    if (ability) return toId(ability) === 'truant';
     const pool = this.data?.A ?? [];
     return pool.length === 1 && pool[0] === 'truant';
+  }
+
+  /** Could this species have this ability at all? Guards against crediting the wrong side. */
+  couldHaveAbility(id) {
+    if (!this.data) return true;
+    const pool = new Set([...(this.data.A ?? []), ...Object.values(this.data.r ?? {}).flatMap((r) => r.a ?? [])]);
+    return pool.size === 0 || pool.has(id);
   }
   get types() { return this.data?.t ?? []; }
   get isKnown() { return Boolean(this.data); }
@@ -287,6 +420,12 @@ export class TrackedMon {
   }
 }
 
+/** The single distinct value in a list, or null if there are none or several. */
+function onlyOne(list) {
+  const distinct = [...new Set(list)];
+  return distinct.length === 1 ? distinct[0] : null;
+}
+
 /** One side's team and field, as far as we can tell. */
 class TrackedSide {
   constructor() {
@@ -306,6 +445,13 @@ class TrackedSide {
     this.lastAction = null;
     /** Showdown said our active can Tera right now, and into what (our side only). */
     this.canTera = null;
+    /**
+     * What the active looked like when it came in, and what it's been
+     * credited with since. Illusion is why: Zoroark arrives looking like a
+     * teammate, and everything it does gets pinned on the disguise until it's
+     * hit. When the disguise breaks, this is what gets handed back.
+     */
+    this.sinceSwitch = null;
   }
 
   get active() { return this.team[this.activeIndex] ?? null; }
@@ -474,6 +620,7 @@ export class Battle {
     // the Scarf check, which only runs once a turn is complete.
     this.turnMoves = [];
     this.turnStartSpeeds = {};
+    this.replacedThisTurn = false;
     this.log = [];
     this.notes = []; // things worth telling the player, newest last
   }
@@ -504,13 +651,19 @@ export class Battle {
     const cmd = parts[0];
     const args = parts.slice(1);
 
+    // Abilities and items announce themselves in passing far more often than
+    // with a line of their own: "[from] item: Leftovers" on a heal, "[from]
+    // ability: Rough Skin" on chip damage, "[from] ability: Drought" on the
+    // weather. Each one is as certain as a reveal.
+    const revealed = this.noteRevealedEffects(cmd, args);
+
     switch (cmd) {
       case 'player': return this.onPlayer(args);
       case 'teamsize': return this.onTeamSize(args);
       case 'turn': return this.onTurn(args);
       case 'switch':
-      case 'drag':
-      case 'replace': return this.onSwitch(args, cmd);
+      case 'drag': return this.onSwitch(args, cmd);
+      case 'replace': return this.onReplace(args);
       case 'detailschange': return this.onDetailsChange(args);
       case 'move': return this.onMove(args);
       case '-damage':
@@ -538,14 +691,83 @@ export class Battle {
       case '-end': return this.onVolatileEnd(args);
       case '-prepare': return this.onPrepare(args);
       case '-mustrecharge': return this.onMustRecharge(args);
-      case '-activate': return this.onActivate(args);
+      case '-activate': return this.onActivate(args) || revealed;
       case '-transform': return true;
       case 'cant': return this.onCant(args);
       case 'raw': return this.onRaw(args);
       case 'win': this.ended = true; this.winner = args[0]; return true;
       case 'tie': this.ended = true; return true;
-      default: return false;
+      default: return revealed;
     }
+  }
+
+  /**
+   * Credit abilities and items named in `[from]` tags to whoever has them.
+   *
+   * Who that is depends on the message. Rough Skin's chip lands on the
+   * attacker with the holder in `[of]`; Volt Absorb's heal lands on the holder
+   * with the attacker in `[of]`. So each kind of line names who to try first,
+   * and the species' own ability pool settles it: Volt Absorb is never credited
+   * to something that can't have it. Returns true if anything was learned.
+   */
+  noteRevealedEffects(cmd, args) {
+    const kw = {};
+    const positional = [];
+    for (const a of args) {
+      const m = /^\[(\w+)\]\s?(.*)$/.exec(a);
+      if (m) kw[m[1]] = m[2]; else positional.push(a);
+    }
+    const main = this.resolve(positional[0]).mon;
+    const of = kw.of ? this.resolve(kw.of).mon : null;
+    let learned = false;
+
+    const ability = /^ability:\s*(.+)$/i.exec(kw.from ?? '')?.[1];
+    if (ability && cmd !== '-ability') {
+      // The holder is the target of these; [of] is whoever set it off.
+      const holderFirst = ['-heal', '-immune', '-curestatus', '-formechange', '-transform',
+        '-start', '-end', '-activate', '-cureteam', '-clearnegativeboost', 'cant'].includes(cmd)
+        || (cmd === '-item' && !/frisk/i.test(ability));
+      learned = this.creditAbility(ability, holderFirst ? [main, of] : [of, main]) || learned;
+    }
+    // "ability: X" as an argument: the Pokémon named first is the holder.
+    if (cmd === 'cant' || cmd === '-activate') {
+      const named = positional.map((a) => /^ability:\s*(.+)$/i.exec(a)?.[1]).find(Boolean);
+      if (named) learned = this.creditAbility(named, [main, of]) || learned;
+    }
+
+    const item = /^item:\s*(.+)$/i.exec(kw.from ?? '')?.[1];
+    if (item) {
+      // A heal or a self-inflicted hit is the holder's own item; recoil from
+      // Rocky Helmet names the holder in [of].
+      const holder = cmd === '-damage' && of ? of : main;
+      if (holder && !['-item', '-enditem'].includes(cmd)) {
+        holder.item = item;
+        holder.itemKnownGone = false;
+        holder.confirmed.item = false;
+        learned = true;
+      }
+    }
+    if (cmd === '-activate') {
+      const named = positional.map((a) => /^item:\s*(.+)$/i.exec(a)?.[1]).find(Boolean);
+      if (named && main) { main.item = named; main.confirmed.item = false; learned = true; }
+    }
+    return learned;
+  }
+
+  /** Give an ability to the first of these that could have it. */
+  creditAbility(name, candidates) {
+    const id = toId(name);
+    const present = candidates.filter(Boolean);
+    // With only one Pokémon named there's no one else it could be, even if
+    // the set data has never seen that ability on it (the pools are sampled).
+    const holder = present.length === 1 ? present[0] : present.find((m) => m.couldHaveAbility(id));
+    if (!holder) return false;
+    // Something seen in the battle outranks a tap, and the first one seen is
+    // its own: anything after is an ability that changed hands mid-battle.
+    if (holder.ability && !holder.confirmed.ability) return false;
+    holder.ability = name;
+    holder.confirmed.ability = false;
+    return true;
   }
 
   /** `p1a: Great Tusk` -> { side, mon } */
@@ -584,6 +806,7 @@ export class Battle {
     for (const slot of ['p1', 'p2']) {
       const mon = this.sides[slot].active;
       if (!mon) continue;
+      mon.nextMove = null; // a call was for the turn that just ended
       for (const [name, left] of mon.volatileTurns) {
         if (left <= 1) { mon.volatileTurns.delete(name); mon.volatiles.delete(name); }
         else mon.volatileTurns.set(name, left - 1);
@@ -616,6 +839,7 @@ export class Battle {
     const level = rest.map((r) => /^L(\d+)$/.exec(r)).find(Boolean)?.[1];
     const gender = rest.find((r) => r === 'M' || r === 'F') ?? null;
 
+    for (const m of side.team) m.nextMove = null;
     let mon = side.find(speciesPart) ?? side.find(nickname);
     if (!mon) {
       mon = new TrackedMon(this.dex, speciesPart, level ? parseInt(level, 10) : null, gender);
@@ -623,6 +847,14 @@ export class Battle {
     }
     side.activeIndex = side.team.indexOf(mon);
     mon.timesSeenActive += 1;
+    side.sinceSwitch = {
+      mon, moves: [],
+      before: {
+        hpPercent: mon.hpPercent, hpExact: mon.hpExact, hpIsExact: mon.hpIsExact,
+        status: mon.status, item: mon.item, itemKnownGone: mon.itemKnownGone,
+        ability: mon.ability, scarfProven: mon.scarfProven,
+      },
+    };
 
     // Switching out clears boosts, volatiles and any Choice lock.
     mon.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
@@ -636,6 +868,71 @@ export class Battle {
 
     if (hp) this.applyHp(mon, hp);
     if (cmd === 'switch') side.conditions.toxicCount = 0;
+    return true;
+  }
+
+  /**
+   * `|replace|`: an Illusion just broke. The Pokémon on the field was never
+   * what it looked like, so hand everything it did since it came in to the
+   * real one, and put the disguise back the way it was.
+   */
+  onReplace([ref, details, hp]) {
+    const slot = /^(p[12])/.exec(ref ?? '')?.[1];
+    if (!slot) return false;
+    const side = this.sides[slot];
+    const disguise = side.active;
+    const since = side.sinceSwitch;
+
+    const [speciesPart, ...rest] = (details ?? '').split(',').map((x) => x.trim());
+    const level = rest.map((r) => /^L(\d+)$/.exec(r)).find(Boolean)?.[1];
+    const gender = rest.find((r) => r === 'M' || r === 'F') ?? null;
+    let mon = side.find(speciesPart);
+    if (!mon) {
+      mon = new TrackedMon(this.dex, speciesPart, level ? parseInt(level, 10) : null, gender);
+      side.team.push(mon);
+    }
+    side.activeIndex = side.team.indexOf(mon);
+    this.replacedThisTurn = true;
+
+    if (disguise && disguise !== mon) {
+      // The real one keeps what happened on the field.
+      mon.boosts = disguise.boosts;
+      mon.volatiles = disguise.volatiles;
+      mon.volatileTurns = disguise.volatileTurns;
+      mon.lastMove = disguise.lastMove;
+      mon.timesSeenActive += 1;
+      disguise.boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
+      disguise.volatiles = new Set();
+      disguise.volatileTurns = new Map();
+      disguise.lastMove = null;
+      disguise.timesSeenActive = Math.max(0, disguise.timesSeenActive - 1);
+
+      if (since?.mon === disguise) {
+        for (const id of since.moves) {
+          const n = (disguise.revealedMoves.get(id) ?? 0) - 1;
+          if (n > 0 || disguise.confirmed.moves.has(id)) disguise.revealedMoves.set(id, Math.max(0, n));
+          else disguise.revealedMoves.delete(id);
+          mon.revealedMoves.set(id, (mon.revealedMoves.get(id) ?? 0) + 1);
+        }
+        const b = since.before;
+        const falseScarf = disguise.scarfProven && !b.scarfProven;
+        // Whatever it was credited with while disguised was the real one's —
+        // except a Scarf "proven" from speeds that were never its own.
+        if (disguise.item !== b.item && !falseScarf) { mon.item = disguise.item; mon.itemKnownGone = disguise.itemKnownGone; }
+        if (disguise.ability !== b.ability) mon.ability = disguise.ability;
+        Object.assign(disguise, {
+          hpPercent: b.hpPercent, hpExact: b.hpExact, hpIsExact: b.hpIsExact, status: b.status,
+          item: b.item, itemKnownGone: b.itemKnownGone, ability: b.ability,
+        });
+        // A Scarf "proven" on the disguise was the real one outspeeding.
+        if (falseScarf) {
+          disguise.scarfProven = false;
+          this.notes = this.notes.filter((n) => !(n.kind === 'scarf' && n.text.startsWith(disguise.speciesName)));
+        }
+      }
+    }
+    side.sinceSwitch = { mon, moves: [], before: since?.before ?? {} };
+    if (hp) this.applyHp(mon, hp);
     return true;
   }
 
@@ -662,6 +959,7 @@ export class Battle {
     const calledByAnother = rest.some((r) => /^\[from\]/.test(r) && !/\[from\]lockedmove/.test(r));
     if (!calledByAnother) {
       mon.revealedMoves.set(id, (mon.revealedMoves.get(id) ?? 0) + 1);
+      if (side?.sinceSwitch?.mon === mon) side.sinceSwitch.moves.push(id);
     }
 
     const slot = /^(p[12])/.exec(ref)?.[1];
@@ -739,6 +1037,8 @@ export class Battle {
   evaluateTurnOrder() {
     const moves = this.turnMoves;
     this.turnMoves = [];
+    // An Illusion broke this turn: whoever moved wasn't who it looked like.
+    if (this.replacedThisTurn) { this.replacedThisTurn = false; return; }
     if (moves.length !== 2) return; // someone switched, flinched or was asleep
     const [first, second] = moves;
     if (first.slot === second.slot) return; // one side acted twice
@@ -988,6 +1288,7 @@ export class Battle {
     if (!mon) return false;
     mon.item = item;
     mon.itemKnownGone = false;
+    mon.confirmed.item = false;
     if (/^choice/.test(toId(item))) {
       // A revealed Choice item means the last move it used is its lock.
       const last = [...mon.revealedMoves.keys()].pop();
@@ -996,18 +1297,36 @@ export class Battle {
     return true;
   }
 
-  onEndItem([ref]) {
+  onEndItem([ref, item]) {
     const { mon } = this.resolve(ref);
     if (!mon) return false;
+    // What it was holding is still worth knowing: it narrows the set.
+    if (item && (!mon.item || mon.confirmed.item)) { mon.item = item; mon.confirmed.item = false; }
     mon.itemKnownGone = true;
     mon.choiceLockedTo = null;
     return true;
   }
 
-  onAbility([ref, ability]) {
+  onAbility([ref, ability, ...rest]) {
     const { mon } = this.resolve(ref);
     if (!mon) return false;
-    mon.ability = ability;
+    const from = rest.map((r) => /^\[from\]\s?(.*)$/.exec(r)?.[1]).find(Boolean);
+    if (!from) {
+      // Its own ability, announced. Beats anything tapped.
+      mon.ability = ability;
+      mon.confirmed.ability = false;
+      return true;
+    }
+    // A copied or swapped ability isn't the one it came in with. Trace is
+    // the exception worth reading: the tracer has Trace, the one it copied
+    // from has what was copied.
+    const of = this.resolve(rest.map((r) => /^\[of\]\s?(.*)$/.exec(r)?.[1]).find(Boolean)).mon;
+    if (/^ability:\s*trace$/i.test(from)) {
+      this.creditAbility('Trace', [mon]);
+      if (of) this.creditAbility(ability, [of]);
+    } else if (/^ability:/i.test(from)) {
+      this.creditAbility(from.replace(/^ability:\s*/i, ''), [of, mon]);
+    }
     return true;
   }
 

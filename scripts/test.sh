@@ -18,6 +18,10 @@ echo "=== Choice Scarf detection ==="
 node tests/js/check_scarf_detection.mjs || fail=1
 
 echo
+echo "=== chat lines for the strip above the bar ==="
+node tests/js/check_chat.mjs || fail=1
+
+echo
 echo "=== state reader against real games ==="
 if curl -sS --max-time 4 -o /dev/null "http://localhost:8111/" 2>/dev/null; then
   node tests/js/check_state_reader.mjs "${GAMES:-16}" || fail=1

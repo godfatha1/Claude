@@ -149,6 +149,12 @@ dd.proven{color:var(--warning);font-weight:600}
 .chip.sure{border-color:var(--accent);background:var(--accent-soft);color:var(--accent);font-weight:600}
 .chip.sure::after{content:' ✓'}
 .chip.seen{border-color:var(--good);background:color-mix(in srgb,var(--good) 10%,transparent);color:var(--good);font-weight:600;cursor:default}
+.chip.seen[data-kind="move"]{cursor:pointer}
+.chip .odds{font-family:var(--data);font-size:10.5px;opacity:.75}
+.chip.assumed{border-style:dashed;border-color:var(--good);color:var(--good);font-weight:600}
+.chip.assumed::after{content:' (only option)';font-weight:400;font-size:10.5px;opacity:.8}
+.chip.next{border-color:#d0730b;background:color-mix(in srgb,var(--warning) 18%,transparent);color:#b0600a;font-weight:700;box-shadow:0 0 0 1px #d0730b}
+.chip.next::after{content:' → next'}
 
 ul.notes{list-style:none;margin:0;padding:0}
 ul.notes>li{padding:9px 12px;border-bottom:1px solid var(--border);font-size:12.5px;

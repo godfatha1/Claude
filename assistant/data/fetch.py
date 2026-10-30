@@ -23,6 +23,14 @@ SOURCES = (
     "https://pkmn.github.io/randbats/data/{fmt}.json",
 )
 
+# The same sets, counted: how often each role, move, item and ability actually
+# comes out of the generator. The plain file only says what's possible; this
+# says how likely, which is what "62% they have Earthquake" needs.
+STATS_SOURCES = (
+    "https://raw.githubusercontent.com/pkmn/randbats/main/data/stats/{fmt}.json",
+    "https://pkmn.github.io/randbats/data/stats/{fmt}.json",
+)
+
 # How old a cached copy may get before we try the network again. The sets only
 # change when the format is rebalanced, so this is deliberately slack.
 MAX_AGE_SECONDS = 24 * 60 * 60
@@ -36,13 +44,19 @@ def cache_path(fmt: str) -> Path:
     return CACHE_DIR / f"{fmt}.json"
 
 
-def load(fmt: str = "gen9randombattle", *, refresh: bool = False) -> dict:
+def load_stats(fmt: str = "gen9randombattle", *, refresh: bool = False) -> dict:
+    """The per-role frequencies for a format. Same caching rules as `load`."""
+    return load(fmt, refresh=refresh, _sources=STATS_SOURCES, _suffix="-stats")
+
+
+def load(fmt: str = "gen9randombattle", *, refresh: bool = False,
+         _sources: tuple[str, ...] = SOURCES, _suffix: str = "") -> dict:
     """Return the set data for a format, fetching it if we need to.
 
     Falls back to a stale cached copy if the network is down — out-of-date sets
     beat no sets at all, and we say so on stderr rather than failing a battle.
     """
-    path = cache_path(fmt)
+    path = cache_path(fmt + _suffix)
     fresh_enough = (
         path.exists()
         and not refresh
@@ -52,7 +66,7 @@ def load(fmt: str = "gen9randombattle", *, refresh: bool = False) -> dict:
         return json.loads(path.read_text())
 
     try:
-        data = _download(fmt)
+        data = _download(fmt, _sources)
     except Exception as exc:
         if path.exists():
             print(f"couldn't refresh {fmt} sets ({exc}); using the cached copy")
@@ -64,9 +78,9 @@ def load(fmt: str = "gen9randombattle", *, refresh: bool = False) -> dict:
     return data
 
 
-def _download(fmt: str) -> dict:
+def _download(fmt: str, sources: tuple[str, ...] = SOURCES) -> dict:
     last: Exception | None = None
-    for template in SOURCES:
+    for template in sources:
         url = template.format(fmt=fmt)
         try:
             with urllib.request.urlopen(url, timeout=30) as response:

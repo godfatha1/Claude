@@ -204,12 +204,68 @@ check('it names the teammate to switch to (private feed working)',
   ownKnowledge.hasNamedSwitch,
   ownKnowledge.opts.join(', '));
 
-// 5. Clean?
+// 5. Chat shows above the bar: theirs on its own line, everything else below.
+// This local server won't let unregistered guests talk in battles, so the
+// lines go in where the client's own traffic does: through the early hook.
+// The format is the server's (`|c|☆Name|text`); check_chat.mjs covers parsing.
+await page.evaluate(([r, foeName, ourName]) => window.__assistFeed.listener(
+  `>${r}\n|c|☆${foeName}|glhf from the foe\n|c|☆${ourName}|hi from me`), [foeRoom, `Foe${RUN}`, `Player${RUN}`]);
+try {
+  await page.waitForFunction(() => /glhf from the foe/.test(document.getElementById('assist-chat-them')?.textContent ?? ''),
+    null, { timeout: 15000 });
+  check("the opponent's chat shows above the bar", true);
+} catch {
+  check("the opponent's chat shows above the bar", false,
+    `them: "${await page.textContent('#assist-chat-them')}" all: "${await page.textContent('#assist-chat-all')}"`);
+}
+try {
+  await page.waitForFunction(() => /hi from me/.test(document.getElementById('assist-chat-all')?.textContent ?? ''),
+    null, { timeout: 15000 });
+  check('everything else said shows on the line below it', true);
+} catch {
+  check('everything else said shows on the line below it', false,
+    `all: "${await page.textContent('#assist-chat-all')}"`);
+}
+const layout = await page.evaluate(() => {
+  const chat = document.getElementById('assist-chat').getBoundingClientRect();
+  const them = document.getElementById('assist-chat-them').getBoundingClientRect();
+  const all = document.getElementById('assist-chat-all').getBoundingClientRect();
+  const bar = document.getElementById('assist-bar').getBoundingClientRect();
+  const pad = parseFloat(getComputedStyle(document.body).paddingBottom);
+  return { order: them.bottom <= all.top + 1 && all.bottom <= bar.top + 1, pad, needed: chat.height + bar.height };
+});
+check('order is: their chat, other chat, then the bar', layout.order);
+check("the page keeps its own buttons clear of it", layout.pad >= layout.needed - 1, JSON.stringify(layout));
+
+// 6. Every move they could have is in the damage list, not only sampled ones.
+let rowsMatch = null;
+for (let i = 0; i < 20 && !rowsMatch?.ok; i++) {
+  rowsMatch = await page.evaluate(() => {
+    const them = window.__assist?.battle?.them?.active;
+    if (!them || them.fainted) return { ok: false, why: 'no live opponent' };
+    const want = [...them.moveOdds().keys()].sort();
+    const got = [...document.querySelectorAll('#assist-dmg button.dr.theirs')].map((b) => b.dataset.id).sort();
+    const unseenWithOdds = [...document.querySelectorAll('#assist-dmg button.dr.guess .odds')].length;
+    return { ok: want.length > 0 && want.join() === got.join(), want, got, unseenWithOdds };
+  });
+  if (!rowsMatch.ok) await new Promise((r) => setTimeout(r, 1000));
+}
+check('every move they could have has a damage row', rowsMatch.ok, JSON.stringify(rowsMatch));
+console.log(`         ${rowsMatch.got?.length ?? 0} of their moves listed, ${rowsMatch.unseenWithOdds ?? 0} with a "likely" figure`);
+
+// 7. Clean?
 const real = errors.filter((e) => !/favicon|Failed to load resource/i.test(e));
 check('no page errors', real.length === 0, real.slice(0, 3).join(' / '));
 
 await page.screenshot({ path: 'tests/js/panel-in-page.png', fullPage: false });
-console.log('\n  screenshot: tests/js/panel-in-page.png');
+// The damage list and their chips, and the collapsed bar with chat over it.
+await page.evaluate(() => document.getElementById('assist-dmg').scrollIntoView());
+await page.screenshot({ path: 'tests/js/panel-damage.png', fullPage: false });
+await page.evaluate(() => document.getElementById('assist-read').scrollIntoView());
+await page.screenshot({ path: 'tests/js/panel-read.png', fullPage: false });
+await page.click('#assist-bar');
+await page.screenshot({ path: 'tests/js/panel-collapsed.png', fullPage: false });
+console.log('\n  screenshots: tests/js/panel-{in-page,damage,read,collapsed}.png');
 
 await browser.close();
 foe.close();
