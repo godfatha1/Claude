@@ -130,37 +130,84 @@ CONTENT_TYPES = {
 
 # ---------------------------------------------------------- self-update
 #
-# The phone can't be reached from where the code is written, so it fetches the
-# code itself: each time the page is opened, if it's been a while, pull the
-# branch in the background. The panel, engine and data are read from disk per
-# request, so the next page load has them. This file is already running and
-# needs a restart to change, which the boot hook does on the next reboot.
+# The phone can't be reached from where the code is written, so it keeps
+# itself current: it checks the branch every few minutes, and again whenever
+# the page is opened. The panel, engine and data are read from disk on every
+# request, so the next page load has them. If this file itself changed, the
+# server restarts itself in place (same pid, same port) to pick it up.
 #
-# Only when asked (--self-update): a `git reset --hard` is the wrong thing to
-# do to a checkout someone is working in.
+# On by default in Termux, which is the only place this runs for real. Off
+# elsewhere unless asked for: a `git reset --hard` is the wrong thing to do to
+# a checkout someone is working in.
 
-UPDATE_EVERY = 10 * 60
-_update = {"last": 0.0, "lock": threading.Lock()}
+DEFAULT_BRANCH = "claude/pokemon-showdown-assistant-3xna06"
+CHECK_EVERY = 5 * 60          # background check
+CHECK_ON_OPEN_AFTER = 60      # opening the page checks if the last one is older
+_update = {"last": 0.0, "lock": threading.Lock(), "running": False}
+# Requests being served right now, so a restart can wait for them to finish
+# rather than cut off the page load that noticed the update.
+_busy = {"n": 0, "lock": threading.Lock()}
 
 
-def maybe_update(branch: str) -> None:
-    now = time.monotonic()
+def _restart_when_idle(limit: float = 30.0) -> None:
+    deadline = time.monotonic() + limit
+    while _busy["n"] > 0 and time.monotonic() < deadline:
+        time.sleep(0.2)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execv(sys.executable, [sys.executable, str(ROOT / "serve.py"), *sys.argv[1:]])
+
+
+def in_termux() -> bool:
+    return "com.termux" in os.environ.get("PREFIX", "") or bool(os.environ.get("TERMUX_VERSION"))
+
+
+def _git(*args: str, timeout: int = 60) -> str:
+    done = subprocess.run(["git", "-C", str(ROOT), *args], check=True, timeout=timeout,
+                          capture_output=True, text=True)
+    return done.stdout.strip()
+
+
+def update_now(branch: str) -> None:
+    """Pull the branch if it moved. Restarts this process if serve.py changed."""
     with _update["lock"]:
-        if now - _update["last"] < UPDATE_EVERY:
+        if _update["running"]:
             return
-        _update["last"] = now
+        _update["running"] = True
+        _update["last"] = time.monotonic()
+    try:
+        _git("fetch", "--depth", "1", "origin", branch)
+        head, fetched = _git("rev-parse", "HEAD"), _git("rev-parse", "FETCH_HEAD")
+        if head == fetched:
+            return
+        changed = _git("diff", "--name-only", head, fetched).splitlines()
+        _git("reset", "--hard", "-q", fetched, timeout=30)
+        version = (ROOT / "VERSION").read_text().strip() if (ROOT / "VERSION").is_file() else "?"
+        sys.stderr.write(f"updated to {fetched[:7]} (v{version}): {len(changed)} files\n")
+        if "serve.py" in changed:
+            sys.stderr.write("serve.py changed, restarting in place once idle\n")
+            _restart_when_idle()
+    except (subprocess.SubprocessError, OSError) as err:
+        # Offline, or no git: keep serving what's here and try again later.
+        sys.stderr.write(f"update skipped: {err}\n")
+    finally:
+        _update["running"] = False
 
-    def run() -> None:
-        try:
-            subprocess.run(["git", "-C", str(ROOT), "fetch", "--depth", "1", "origin", branch],
-                           check=True, timeout=60, capture_output=True)
-            subprocess.run(["git", "-C", str(ROOT), "reset", "--hard", "-q", "FETCH_HEAD"],
-                           check=True, timeout=30, capture_output=True)
-        except (subprocess.SubprocessError, OSError) as err:
-            # Offline, or no git: keep serving what's here.
-            sys.stderr.write(f"update skipped: {err}\n")
 
-    threading.Thread(target=run, daemon=True).start()
+def maybe_update(branch: str, older_than: float) -> None:
+    """Check in the background if the last check is older than this."""
+    if time.monotonic() - _update["last"] < older_than or _update["running"]:
+        return
+    threading.Thread(target=update_now, args=(branch,), daemon=True).start()
+
+
+def keep_updated(branch: str) -> None:
+    """Check now, then every few minutes, for as long as the server runs."""
+    def loop() -> None:
+        while True:
+            update_now(branch)
+            time.sleep(CHECK_EVERY)
+    threading.Thread(target=loop, daemon=True).start()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -290,9 +337,18 @@ class Handler(BaseHTTPRequestHandler):
     # -------------------------------------------------------------- routes
 
     def route(self, method: str) -> None:
+        with _busy["lock"]:
+            _busy["n"] += 1
+        try:
+            self._route(method)
+        finally:
+            with _busy["lock"]:
+                _busy["n"] -= 1
+
+    def _route(self, method: str) -> None:
         path = urllib.parse.urlparse(self.path).path
         if path == "/" and method == "GET" and self.self_update_branch:
-            maybe_update(self.self_update_branch)
+            maybe_update(self.self_update_branch, CHECK_ON_OPEN_AFTER)
         if path.startswith(OURS):
             if method in ("GET", "HEAD"):
                 self.serve_ours(path)
@@ -322,12 +378,15 @@ def main() -> int:
                              "so anything else puts this on every network you join.")
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--self-update", metavar="BRANCH", default=None,
-                        help="pull this branch into the checkout when the page is opened, "
-                             "at most every ten minutes. Used on the phone.")
+                        help="keep the checkout on this branch: checks every five minutes "
+                             "and when the page is opened. On by default in Termux.")
+    parser.add_argument("--no-update", action="store_true",
+                        help="never pull, even in Termux")
     args = parser.parse_args()
 
     Handler.quiet = args.quiet
-    Handler.self_update_branch = args.self_update
+    branch = None if args.no_update else (args.self_update or (DEFAULT_BRANCH if in_termux() else None))
+    Handler.self_update_branch = branch
 
     missing = [p for p in ("app/panel.js", "engine/poke_engine_wasm_bg.wasm",
                            "data/gen9randombattle.json") if not (ROOT / p).is_file()]
@@ -343,6 +402,9 @@ def main() -> int:
     print(f"  Showdown passes through from {UPSTREAM}")
     print("  log in there as you normally would — the panel appears in the battle")
     print("  ctrl-c to stop")
+    if branch:
+        print(f"  keeping itself current with {branch} (every {CHECK_EVERY // 60} min and on open)")
+        keep_updated(branch)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

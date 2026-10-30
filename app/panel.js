@@ -75,6 +75,7 @@ const PANEL = `
         <button type="button" data-budget="deep">deep</button>
       </div>
       <span class="assist-cost" id="assist-cost"></span>
+      <span class="assist-ver" id="assist-ver" title="the version this phone is running"></span>
     </div>
   </div>
 </div>`;
@@ -513,6 +514,11 @@ async function start() {
     dex = loadedDex;
     engine = loadedEngine;
     advisor = new Advisor(dex, engine);
+    // Which version this phone is running, so you can tell an update landed.
+    fetch(new URL('../VERSION', BASE).href, { cache: 'no-store' })
+      .then((r) => (r.ok ? r.text() : ''))
+      .then((v) => { if (v.trim()) $('assist-ver').textContent = `v${v.trim()}`; })
+      .catch(() => {});
     window.__assist = { get battle() { return battle; }, dex, engine, advisor,
                         get teraNow() { return teraNow; },
                         get chat() { return { them: chatThem, all: chatAll }; } };

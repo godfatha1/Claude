@@ -15,10 +15,10 @@ curl -sSL https://raw.githubusercontent.com/godfatha1/Claude/claude/pokemon-show
 Running it again updates and restarts. The server is started with `setsid` and
 tracked by pid, so it survives the ssh session closing.
 
-After that it keeps itself current: whenever the page is opened (at most every
-ten minutes) it fetches the branch in the background, so a push lands on the
-phone by itself. Changes to `serve.py` itself take effect on the next reboot or
-installer run.
+After that it keeps itself current: it checks the branch every 5 minutes and
+whenever the page is opened, pulls anything new, and restarts itself in place
+if the server file changed. A push lands on the phone by itself. The version
+it's running shows bottom right on the panel.
 
 ### From another machine
 

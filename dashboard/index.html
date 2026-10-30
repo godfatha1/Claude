@@ -210,7 +210,7 @@ dl.facts dd.ok{color:var(--good)}
 <script>
 // Project state. Updated by republishing this page as the build moves.
 const STATE = {
-  version: "0.7.0",
+  version: "0.7.1",
   status: { label: "Reads odds, takes your calls", tone: "live" },
   updated: "2026-10-30",
   branch: "claude/pokemon-showdown-assistant-3xna06",
@@ -235,6 +235,7 @@ const STATE = {
 
   facts: [
     { k: "Runs on", v: "your phone, in Termux", ok: true },
+    { k: "Phone updates", v: "itself, within 5 min of a push", ok: true },
     { k: "Search engine", v: "poke-engine, WebAssembly, Tera on", ok: true },
     { k: "Decision method", v: "search over 4 sampled sets" },
     { k: "Opponent stats", v: "exact", ok: true },

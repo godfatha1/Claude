@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.0
+**Version:** 0.7.1
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -41,6 +41,12 @@ stats and a public set database, and both are big advantages.
   every request is same-origin, as on their own site), and a spectator can't see
   your own team (from inside the page the panel reads the same feed the client
   does). Install with `deploy-android/install.sh`.
+- **Pushing is shipping.** The phone server keeps itself on this branch: it
+  checks every 5 minutes and whenever the page is opened, pulls, and restarts
+  itself in place (same pid, same port, after in-flight requests finish) if
+  `serve.py` changed. On by default in Termux, off elsewhere (`--no-update`
+  to turn it off). The panel shows the `VERSION` it's running, bottom right.
+  Bump `VERSION` on every push.
 - **The GitHub Pages version still works** as the no-install fallback, but it
   can only watch from outside and so can't see your own bench.
 - **Engine compiled to WebAssembly** — originally for Pages, still right here:
@@ -263,9 +269,8 @@ test feeds chat lines through the same early hook real traffic uses;
 - **Damage numbers are max-roll based.** The engine's calculator returns the
   top roll (and the top crit); the low end is taken as 85% of it, which is the
   real roll range. Shown as a share of max HP, not current.
-- **Pushing to the phone from here.** This container can't reach the phone:
-  the Cloudflare worker that hands out the ssh host and the Access endpoints
-  behind it are blocked by the egress proxy (`cloudflared` and `paramiko` are
-  installed and useless without them). After a push, the phone picks the new
-  version up by re-running the one-line installer, or by a `git pull` in its
-  checkout if it was installed from one.
+- **Reaching into the phone from here** still isn't possible: the Cloudflare
+  worker and Access endpoints are blocked by this container's network policy,
+  and there's no ssh key here. It doesn't need to be — the phone pulls. The
+  only case that needs a hand is an install from before 2026-10-16, which has
+  no self-update at all: run the installer once and it's automatic after.
