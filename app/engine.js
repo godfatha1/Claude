@@ -6,6 +6,7 @@
 // measurements behind the budgets.
 
 let wasm = null;
+let loadedFrom = null;
 
 export class Engine {
   constructor(module) {
@@ -25,6 +26,7 @@ export class Engine {
       const module = await import(resolved);
       await module.default();
       wasm = module;
+      loadedFrom = resolved;
     }
     return new Engine(wasm);
   }
@@ -38,6 +40,22 @@ export class Engine {
   search(state, positions = 12000) {
     const raw = this.module.search(JSON.stringify(state), 0, positions);
     return JSON.parse(raw);
+  }
+
+  /**
+   * Swap in a fresh copy of the engine.
+   *
+   * When the engine crashes in the browser it stops mid-call and its memory is
+   * left however it was, so later calls can't be trusted. Importing the module
+   * again under a different address gives a brand-new instance with clean
+   * memory; the engine file itself comes from the cache.
+   */
+  async recover() {
+    if (!loadedFrom) return;
+    const module = await import(`${loadedFrom}${loadedFrom.includes('?') ? '&' : '?'}fresh=${Date.now()}`);
+    await module.default();
+    wasm = module;
+    this.module = module;
   }
 
   /** The legal actions, without searching. Used to fill the panel immediately. */

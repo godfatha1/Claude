@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.1
+**Version:** 0.7.2
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -47,6 +47,12 @@ stats and a public set database, and both are big advantages.
   `serve.py` changed. On by default in Termux, off elsewhere (`--no-update`
   to turn it off). The panel shows the `VERSION` it's running, bottom right.
   Bump `VERSION` on every push.
+- **But the phone is currently off that path.** As of 2026-10-30 it runs
+  0.7.1 merged with the desktop session's local patches ("p13", kept on its
+  desktop as `deploy/patches_on_0.7.1.diff`), with `--no-update` in the boot
+  hook so the pull can't `reset --hard` over them. Pushes reach it only when
+  that session merges them. To get back to automatic: get that diff, fold
+  what's still needed into this branch, then the phone can drop `--no-update`.
 - **The GitHub Pages version still works** as the no-install fallback, but it
   can only watch from outside and so can't see your own bench.
 - **Engine compiled to WebAssembly** — originally for Pages, still right here:
@@ -226,6 +232,30 @@ wasn't being handed over:
   possible "proven Scarf" pinned on the disguise. On `|replace|` all of that is
   handed back. Likely the cause of the one false Scarf claim never reproduced.
 
+- **Statuses reach the engine without crashing it.** The engine's own name
+  parser has no fallback for status, weather or terrain: an unknown name panics,
+  which in the browser is an `unreachable` trap. Showdown's spellings (`tox`,
+  `par`, `slp`) were exactly the unknown names, so the first status on either
+  side killed every search for the rest of the game, and the panel kept the
+  old advice up as if current. The wrapper now reads those three by hand
+  (both spellings, anything else is none). Found by the desktop session.
+- **A failed search says so.** If every sampled set fails, the panel says
+  "search failed", clears the old advice, loads a fresh copy of the engine (a
+  crash leaves its memory unusable) and tries again, once per turn.
+- **Tera Blast** with Tera, or once Tera'd, is the Tera type for the
+  immunity veto: "Tera Blast + Tera Fire" into a Ghost is no longer vetoed.
+- **Mid-battle formes have their own stats.** Eiscue-Noice (Speed 130 vs 50),
+  Terapagos-Terastal/Stellar, Meloetta-Pirouette, Minior-Meteor and
+  Palafin-Hero were read with the base form's stats, so the faster form
+  moving first "proved" a Choice Scarf. They now have their own entries
+  (`BATTLE_FORMES` in `scripts/build_data.py`), the tracker follows
+  `detailschange` and `-formechange`, a forme's own ability comes with it
+  (Tera Shell), and no turn where a forme changed is read for a Scarf.
+- **Not credited as their moves:** Struggle, and anything used after
+  transforming (Ditto). **First ability shown is its own:** Calyrex's As One
+  later announces "Chilling Neigh"; that no longer replaces it, and "As One"
+  maps to "As One (Glastrier)".
+
 `tests/js/check_facts_reach_engine.mjs` proves each one arrives and changes the
 legal options (an Encore leaves one move; trapped removes every switch; Tera
 Ground makes Headlong Rush hit harder; Slaking loafs after attacking; a called
@@ -250,17 +280,26 @@ test feeds chat lines through the same early hook real traffic uses;
 - Data bundle: 519 species, 954 moves, 74 KB gzipped (with odds and names).
 - A full turn's advice on throttled phone hardware: **4 sampled sets, 48k
   positions, 600–900 ms.** Comfortably inside a turn.
-- Choice Scarf check: no false claims across 40 real games and 521 turns.
+- Choice Scarf check, real games (2026-10-30): every claim real across the
+  last 120 games; the earlier false claims were forme changes (fixed) and two
+  test bugs (judging by the end-of-game item after a Knock Off).
+- Abilities and items credited, last 60 real games: 76 and 136, all correct.
+- **The real-games test was hollow after its first run per server.** It
+  reused player names, the server rejoined old battles under them, and the
+  test watched those with no real teams, skipping every per-team check while
+  printing green. Names are unique per run now, and a game with no captured
+  team fails. Treat any "all green" from it before 2026-10-30 with suspicion.
 
 ## Open questions
 
 - **Our own bench** — solved in the Termux version, which reads the private feed
   and names every teammate from turn one. Still a limitation on the Pages
   version, which watches from outside.
-- **One false Choice Scarf claim seen once**, in a batch of real games, and not
-  reproducible in ~570 games since. Most likely Illusion (a fast Zoroark
-  looking like something slow), now handled. The test still saves any false
-  claim to `tests/js/false-scarfs/`.
+- **The old unexplained false Scarf claim** was most likely a forme change
+  (Eiscue-Noice or Terapagos), now fixed, or Illusion, also handled. The test
+  still saves any false claim to `tests/js/false-scarfs/`.
+- **A Zoroark that leaves without its Illusion breaking** can't be caught:
+  the log never says it was there. The test counts those separately.
 - **Unseen bench generation** is the known weak point in every randbats bot, ours
   included. Sampled uniformly from the roster, which is at least unbiased.
 - **Scarf recall is only lightly measured.** Precision is solid (no false claims

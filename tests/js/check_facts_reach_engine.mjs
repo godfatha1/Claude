@@ -31,6 +31,7 @@ const check = (label, ok, detail = '') => {
 const out = await page.evaluate(async () => {
   const { Battle } = await import('/app/battle.js');
   const { sampleWorlds, readOpponent } = await import('/app/infer.js');
+  const { Advisor } = await import('/app/advisor.js');
   const { dex, engine } = window.__h;
 
   const lines = (...ls) => ls;
@@ -306,6 +307,84 @@ const out = await page.evaluate(async () => {
       mukHp: muk.hpPercent, zorHp: zor.hpPercent, mukItem: muk.item, zorItem: zor.item,
     };
   }
+  // ---- 19. Forme changes: new stats, new Speed, sometimes a new ability.
+  {
+    const b = fresh();
+    b.handle('|switch|p2a: Eiscue|Eiscue, L86, F|100/100');
+    const before = b.them.active.normalSpeed;
+    b.handle('|-activate|p2a: Eiscue|ability: Ice Face');
+    b.handle('|detailschange|p2a: Eiscue|Eiscue-Noice, L86, F');
+    const after = b.them.active.normalSpeed;
+    // The Noice face outspeeding the turn it changed must not read as a Scarf.
+    b.handle('|move|p2a: Eiscue|Icicle Crash|p1a: Great Tusk');
+    b.handle('|move|p1a: Great Tusk|Headlong Rush|p2a: Eiscue');
+    b.handle('|turn|2');
+    const t = fresh();
+    t.handle('|switch|p2a: Terapagos|Terapagos, L76|100/100');
+    t.handle('|detailschange|p2a: Terapagos|Terapagos-Terastal, L76');
+    t.handle('|-activate|p2a: Terapagos|ability: Tera Shift');
+    res.formes = {
+      before, after, scarf: b.them.active.scarfProven, engineId: worlds(b)[0].theirs.pokemon[1].id,
+      teraAbility: t.them.active.ability, teraSpeed: t.them.active.normalSpeed,
+      search: (() => { try { return engine.search(worlds(t)[0], 800).ours.length > 0; } catch (e) { return String(e); } })(),
+    };
+  }
+
+  // ---- 16. Statuses, in Showdown's own spelling, on both sides and the bench.
+  {
+    const b = fresh();
+    b.handle('|-status|p1a: Great Tusk|tox');
+    b.handle('|-status|p2a: Grimmsnarl|par');
+    b.handle('|switch|p2a: Muk|Muk-Alola, L85, M|100/100');
+    b.handle('|-status|p2a: Muk|slp');
+    b.handle('|switch|p2a: Grimmsnarl|Grimmsnarl, L82, F|100/100');
+    const run = (label, fn) => { try { return { ok: true, value: fn() }; } catch (e) { return { ok: false, label, error: String(e.message ?? e) }; } };
+    const w = worlds(b)[0];
+    res.status = {
+      sent: [w.ours.pokemon[0].status, w.theirs.pokemon[0].status, w.theirs.pokemon[1].status],
+      search: run('search', () => engine.search(w, 1500).ours.length),
+      damage: run('damage', () => engine.damage(w).ours.length),
+      options: run('options', () => engine.options(w).length),
+    };
+    // Burn has to actually reach it: a burned Great Tusk's Headlong Rush hits about half as hard.
+    const plain = fresh(), burned = fresh();
+    burned.handle('|-status|p1a: Great Tusk|brn');
+    for (const x of [plain, burned]) x.us.active.revealedMoves.set('headlongrush', 0);
+    const hit = (x) => engine.damage(worlds(x)[0]).ours.find((m) => m.id === 'headlongrush')?.max ?? 0;
+    res.status.burn = { plain: hit(plain), burned: hit(burned) };
+    // Weather and terrain the engine has no name for read as none, not a crash.
+    const odd = fresh();
+    odd.weather = 'deltastream'; odd.terrain = 'somethingnew';
+    res.status.oddField = run('odd field', () => engine.search(worlds(odd)[0], 800).ours.length);
+    // And every status Showdown sends, one at a time, through a full advise().
+    const advisor = new Advisor(dex, engine);
+    res.status.advise = ['brn', 'par', 'slp', 'frz', 'psn', 'tox'].map((st) => {
+      const x = fresh(); x.handle(`|-status|p2a: Grimmsnarl|${st}`);
+      const r = advisor.advise(x, { budget: 'quick' });
+      return `${st}:${r && !r.failed ? 'ok' : `failed ${r?.error}`}`;
+    });
+  }
+
+  // ---- 17. Every world failing is reported, and a fresh engine can be swapped in.
+  {
+    const broken = { search: () => { throw new Error('unreachable'); } };
+    const r = new Advisor(dex, broken).advise(fresh(), { budget: 'quick' });
+    await engine.recover();
+    res.failure = { failed: r?.failed === true, error: r?.error, afterRecover: engine.search(worlds(fresh())[0], 800).ours.length };
+  }
+
+  // ---- 18. Tera Blast with Tera into a Ghost isn't a Normal move into an immunity.
+  {
+    const b = fresh();
+    b.handle('|switch|p2a: Gengar|Gengar, L80, M|100/100');
+    b.us.active.teraType = 'Fire';
+    const advisor = new Advisor(dex, engine);
+    const acts = advisor.applyGuards([
+      { choice: 'terablast', share: 0.5, vetoed: null },
+      { choice: 'terablast-tera', share: 0.5, vetoed: null },
+    ], b);
+    res.teraBlast = Object.fromEntries(acts.map((a) => [a.choice, a.vetoed]));
+  }
   return res;
 });
 
@@ -414,6 +493,27 @@ check('the call lasts one turn', cl.clearedByTurn === true);
 check('a move they can\'t use isn\'t pinned', cl.lockedPinned === false);
 
 const il = out.illusion;
+const fm = out.formes;
+check('Eiscue losing its Ice Face gets the Noice face\'s Speed', fm.before < fm.after, `${fm.before} -> ${fm.after}`);
+check('…and outspeeding that turn isn\'t read as a Scarf', fm.scarf === false);
+check('…and the engine is told which forme', fm.engineId === 'eiscuenoice', fm.engineId);
+check('Terapagos-Terastal has Tera Shell, not Tera Shift', fm.teraAbility === 'Tera Shell' && fm.search === true,
+  JSON.stringify(fm));
+
+const st = out.status;
+check('statuses are passed as Showdown spells them', st.sent.join() === 'tox,par,slp', st.sent.join());
+check('a statused position searches instead of crashing', st.search.ok && st.damage.ok && st.options.ok,
+  JSON.stringify([st.search, st.damage, st.options].filter((x) => !x.ok)));
+check('burn really reaches the engine (physical damage about halves)',
+  st.burn.burned > 0 && st.burn.burned < st.burn.plain * 0.6, JSON.stringify(st.burn));
+check('weather or terrain it has no name for reads as none', st.oddField.ok, JSON.stringify(st.oddField));
+check('every status gets advice', st.advise.every((x) => x.endsWith(':ok')), st.advise.join(' '));
+check('every world failing is reported, not silent', out.failure.failed && /unreachable/.test(out.failure.error),
+  JSON.stringify(out.failure));
+check('a fresh engine can be swapped in and works', out.failure.afterRecover > 0, String(out.failure.afterRecover));
+check('Tera Blast + Tera into a Ghost is allowed; plain Tera Blast is still vetoed',
+  out.teraBlast['terablast-tera'] === null && /immune to normal/.test(out.teraBlast.terablast ?? ''), JSON.stringify(out.teraBlast));
+
 check('a broken Illusion hands the moves to Zoroark', il.zorMoves.includes('focusblast') && !il.mukMoves.includes('focusblast'),
   JSON.stringify(il));
 check('…and the disguise gets its own HP and item back', il.mukHp === 80 && il.zorHp === 20 && il.mukItem == null && il.zorItem === 'Life Orb',

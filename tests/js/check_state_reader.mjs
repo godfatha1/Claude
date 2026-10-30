@@ -53,10 +53,23 @@ function connect(tag) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Abilities that change Speed or priority. Kept here on purpose rather than
+// imported from the reader, so the count of missed chances is independent.
+const SPEED_OR_PRIORITY_ABILITIES = new Set([
+  'swiftswim', 'chlorophyll', 'sandrush', 'slushrush', 'surgesurfer', 'unburden', 'quickfeet',
+  'speedboost', 'slowstart', 'protosynthesis', 'quarkdrive', 'steamengine', 'motordrive',
+  'weakarmor', 'rattled', 'prankster', 'galewings', 'triage', 'quickdraw', 'stall', 'myceliummight',
+]);
+
 /** Play one real game and return the spectator's view plus the true teams. */
+// Names unique to this run. The server remembers battles by player name, so
+// reusing names across runs rejoins old battles, and the test then watches a
+// stale game with no ground truth while reporting green.
+const RUN = Date.now().toString(36).slice(-5);
+
 async function playOneGame(index) {
-  const nameA = `Alpha${index}`;
-  const nameB = `Bravo${index}`;
+  const nameA = `Alpha${RUN}${index}`;
+  const nameB = `Bravo${RUN}${index}`;
   const a = connect('A');
   const b = connect('B');
   const spy = connect('SPY');
@@ -99,9 +112,9 @@ async function playOneGame(index) {
     try {
       const parsed = JSON.parse(line.slice('|request|'.length));
       if (!parsed.side?.pokemon) return;
+      // Keyed by ident ("p1: Eiscue"), which survives a forme change.
       for (const p of parsed.side.pokemon) {
-        const key = `${side}|${toId(p.details.split(',')[0])}`;
-        (itemsEver[key] ??= new Set()).add(toId(p.item ?? ''));
+        (itemsEver[`${side}|${p.ident}`] ??= new Set()).add(toId(p.item ?? ''));
       }
       trueTeams[side] = parsed.side.pokemon.map((p) => ({
         ident: p.ident,
@@ -171,12 +184,14 @@ const problems = {
   wrongAbility: [],
   wrongItem: [],
   engineState: [],
+  noTruth: [],
 };
 const stats = {
   games: 0, lines: 0, turns: 0,
   scarfsFound: 0, scarfsReal: 0,
   realScarfHoldersSeen: 0,
   abilitiesCredited: 0,
+  illusionUnbroken: 0,
   itemsCredited: 0,
   // A guard that only ever says "no" is worthless, so measure the other side:
   // how often was the order actually there to be read?
@@ -203,7 +218,9 @@ function verify(game) {
   for (const slot of ['p1', 'p2']) {
     const tracked = battle.sides[slot];
     const truth = game.trueTeams[slot];
-    if (!truth) continue;
+    // No ground truth means nothing below was checked. That has to fail,
+    // not quietly pass.
+    if (!truth) { problems.noTruth.push(`${game.room} ${slot}: never saw the real team`); continue; }
 
     const trueBySpecies = new Map();
     for (const t of truth) {
@@ -219,12 +236,16 @@ function verify(game) {
         continue;
       }
 
-      if (toId(match.item) === 'choicescarf') stats.realScarfHoldersSeen += 1;
+      // Judged by anything it held during the game: a Scarf that gets Knocked
+      // Off or Tricked away later was still a Scarf when the order showed it.
+      const heldEver = game.itemsEver?.[`${slot}|${match.ident}`] ?? new Set([toId(match.item ?? '')]);
+      const everScarf = heldEver.has('choicescarf');
+      if (everScarf) stats.realScarfHoldersSeen += 1;
 
       // A Scarf we claim must actually be one.
       if (mon.scarfProven) {
         stats.scarfsFound += 1;
-        if (toId(match.item) === 'choicescarf') stats.scarfsReal += 1;
+        if (everScarf) stats.scarfsReal += 1;
         else {
           problems.falseScarf.push(`${game.room} ${slot}: claimed Scarf on ${mon.speciesName}, really ${match.item || 'nothing'}`);
           // A false claim is rare and misleads when it happens, so keep the
@@ -261,7 +282,7 @@ function verify(game) {
       }
       if (mon.item && !mon.scarfProven) {
         stats.itemsCredited += 1;
-        const ever = game.itemsEver?.[`${slot}|${toId(match.details.split(',')[0])}`] ?? new Set();
+        const ever = game.itemsEver?.[`${slot}|${match.ident}`] ?? new Set();
         if (!ever.has(toId(mon.item))) {
           problems.wrongItem.push(`${game.room} ${slot}: ${mon.speciesName} credited with ${mon.item}, held ${[...ever].join('/') || 'nothing'}`);
         }
@@ -271,6 +292,10 @@ function verify(game) {
       const realMoves = new Set((match.moves ?? []).map(toId));
       for (const moveId of mon.revealedMoves.keys()) {
         if (realMoves.size && !realMoves.has(moveId)) {
+          // A Zoroark that left without its Illusion breaking: the log never
+          // says it was there, so nobody watching can know. Counted, not failed.
+          const zoroark = truth.find((t) => /^Zoroark/i.test(t.details) && (t.moves ?? []).map(toId).includes(moveId));
+          if (zoroark) { stats.illusionUnbroken += 1; continue; }
           // Show where it came from: the line, and a few before it.
           const at = game.spectated.findIndex((l) => l.startsWith('|move|') && toId(l.split('|')[3] ?? '') === moveId);
           const context = at >= 0 ? game.spectated.slice(Math.max(0, at - 4), at + 2).join('\n            ') : '';
@@ -342,12 +367,17 @@ function countOpportunities(game) {
         const fSpeed = fd.sp?.[1];
         const sSpeed = sd.sp?.[1];
         const item = realItem[`${first.slot}|${fd.id}`];
-        if (fSpeed != null && sSpeed != null && item === 'choicescarf'
+        // Either side having an ability that could explain the order means
+        // the order proves nothing, so it isn't a missed chance.
+        const explained = [fd, sd].some((d) => (d.A ?? []).some((a) => SPEED_OR_PRIORITY_ABILITIES.has(a)));
+        if (fSpeed != null && sSpeed != null && item === 'choicescarf' && !explained
             && fSpeed < sSpeed && Math.trunc(fSpeed * 1.5) > sSpeed) {
           const key = `${game.room}|${first.slot}|${fd.id}`;
           if (!seenCaught.has(key)) {
             seenCaught.add(key);
             stats.detectableOpportunities += 1;
+            (stats.opportunityList ??= []).push(`${game.room}: ${first.species} (${fSpeed}) ${first.moveId} before `
+              + `${second.species} (${sSpeed}) ${second.moveId}`);
           }
         }
       }
@@ -403,6 +433,7 @@ const report = (label, list) => {
   for (const line of [...new Set(list)].slice(0, 8)) console.log(`          ${line}`);
 };
 
+report('the real teams were captured (otherwise nothing below is checked)', problems.noTruth);
 report('reader never threw', problems.threw);
 report('every tracked species was really on that team', problems.species);
 report('faint counts stay within the team', problems.faints);
@@ -417,8 +448,12 @@ console.log(`  turns where the order gave it away   : ${stats.detectableOpportun
 console.log(`  of those, the reader caught          : ${stats.opportunitiesCaught}`);
 console.log(`  Scarfs claimed: ${stats.scarfsFound}, of which real: ${stats.scarfsReal}`);
 console.log(`  abilities credited: ${stats.abilitiesCredited}, items credited: ${stats.itemsCredited}`);
-if (stats.detectableOpportunities > 0 && stats.opportunitiesCaught === 0) {
+if (stats.illusionUnbroken) console.log(`  moves from a Zoroark whose Illusion never broke: ${stats.illusionUnbroken} (unknowable)`);
+// One missed chance can still have a reason this counter doesn't see (Tailwind,
+// Trick Room, an item); missing every one of several means the reader is broken.
+if (stats.detectableOpportunities >= 3 && stats.opportunitiesCaught === 0) {
   console.log('\n  WARNING: the order gave away a Scarf and the reader said nothing.');
+  for (const o of stats.opportunityList ?? []) console.log(`    ${o}`);
   console.log('           The guards are too strict to be useful.');
   bad += 1;
 }

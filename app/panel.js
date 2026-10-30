@@ -271,7 +271,8 @@ function think() {
     try {
       showDamage();
       const result = advisor.advise(battle, { budget, teraNow });
-      if (result) show(result);
+      if (result?.failed) searchFailed(result.error);
+      else if (result) show(result);
     } catch (err) {
       console.error('[assist]', err);
       setCall('search failed', 'bad');
@@ -401,6 +402,26 @@ function showDamage() {
     <div class="hd">Their moves → ${esc(us.speciesName)} at ${Math.round(us.hpPercent)}%</div>
     ${theirRows.map((e) => theirRow(e, Math.round(us.hpPercent))).join('')}
     <div class="hint">of max HP · tap one of theirs: they have it · again: they use it next turn · again: undo</div>`;
+}
+
+/**
+ * Every sampled set failed to search. Never leave the old advice up looking
+ * current: say so, start a fresh copy of the engine (a crash can leave the
+ * old one's memory unusable), and try again — once per turn, so a position
+ * that genuinely breaks it can't loop.
+ */
+let recoveredOnTurn = null;
+function searchFailed(error) {
+  console.error('[assist] search failed:', error);
+  $('assist-opts').innerHTML = '';
+  $('assist-conf').textContent = '';
+  $('assist-why').textContent = `the engine failed on this position (${error})`;
+  if (recoveredOnTurn === battle.turn) { setCall('search failed', 'bad'); return; }
+  recoveredOnTurn = battle.turn;
+  setCall('search failed — restarting the engine', 'bad');
+  engine.recover()
+    .then(() => queueThink())
+    .catch((err) => { console.error('[assist] restart failed:', err); setCall('search failed', 'bad'); });
 }
 
 /** The two chat lines above the bar: theirs on top, everyone else's under it. */

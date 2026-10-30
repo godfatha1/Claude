@@ -621,6 +621,7 @@ export class Battle {
     this.turnMoves = [];
     this.turnStartSpeeds = {};
     this.replacedThisTurn = false;
+    this.formeChangedThisTurn = false;
     this.log = [];
     this.notes = []; // things worth telling the player, newest last
   }
@@ -665,6 +666,7 @@ export class Battle {
       case 'drag': return this.onSwitch(args, cmd);
       case 'replace': return this.onReplace(args);
       case 'detailschange': return this.onDetailsChange(args);
+      case '-formechange': return this.onFormeChange(args);
       case 'move': return this.onMove(args);
       case '-damage':
       case '-heal':
@@ -692,7 +694,12 @@ export class Battle {
       case '-prepare': return this.onPrepare(args);
       case '-mustrecharge': return this.onMustRecharge(args);
       case '-activate': return this.onActivate(args) || revealed;
-      case '-transform': return true;
+      case '-transform': {
+        // Ditto and friends: from here its moves are the target's, not its own.
+        const { mon } = this.resolve(args[0]);
+        if (mon) mon.volatiles.add('transform');
+        return true;
+      }
       case 'cant': return this.onCant(args);
       case 'raw': return this.onRaw(args);
       case 'win': this.ended = true; this.winner = args[0]; return true;
@@ -752,6 +759,19 @@ export class Battle {
       if (named && main) { main.item = named; main.confirmed.item = false; learned = true; }
     }
     return learned;
+  }
+
+  /**
+   * Showdown says "As One"; the data says "As One (Glastrier)". When the name
+   * shown isn't in the species' pool but exactly one entry starts with it,
+   * that entry is the one.
+   */
+  canonicalAbility(mon, name) {
+    const id = toId(name);
+    if (!mon.data || mon.couldHaveAbility(id)) return name;
+    const pool = [...new Set([...(mon.data.A ?? []), ...Object.values(mon.data.r ?? {}).flatMap((r) => r.a ?? [])])];
+    const match = pool.filter((a) => a.startsWith(id));
+    return match.length === 1 ? (this.dex.names?.abilities?.[match[0]] ?? match[0]) : name;
   }
 
   /** Give an ability to the first of these that could have it. */
@@ -847,6 +867,9 @@ export class Battle {
     }
     side.activeIndex = side.team.indexOf(mon);
     mon.timesSeenActive += 1;
+    // A temporary forme ends on switching out; the details say what it is now.
+    const now = this.dex.get(speciesPart);
+    if (now && now.id !== mon.data?.id) { mon.data = now; mon.speciesName = speciesPart; }
     side.sinceSwitch = {
       mon, moves: [],
       before: {
@@ -936,15 +959,43 @@ export class Battle {
     return true;
   }
 
+  /**
+   * A permanent forme change: Terapagos into Terastal, Eiscue losing its Ice
+   * Face. Types, stats and Speed all change, and sometimes the ability too,
+   * so the data is re-resolved and the name follows it.
+   */
   onDetailsChange([ref, details]) {
     const { mon } = this.resolve(ref);
     if (!mon) return false;
-    // A forme change can alter types and stats outright, so re-resolve.
     const species = (details ?? '').split(',')[0].trim();
+    if (this.changeForme(mon, species)) mon.speciesName = species;
+    return true;
+  }
+
+  /**
+   * A forme change that lasts while it's out (Meloetta after Relic Song,
+   * Minior dropping its shell). The name stays, so it's still found when it
+   * switches back in; the data — and so the stats and Speed — follow the forme.
+   */
+  onFormeChange([ref, species]) {
+    const { mon } = this.resolve(ref);
+    if (!mon) return false;
+    this.changeForme(mon, String(species ?? '').trim());
+    return true;
+  }
+
+  changeForme(mon, species) {
     const data = this.dex.get(species);
-    if (data) {
-      mon.speciesName = species;
-      mon.data = data;
+    if (!data) return false;
+    const before = mon.data;
+    mon.data = data;
+    // Speed just changed under us: this turn's order proves nothing.
+    this.formeChangedThisTurn = true;
+    // A forme with an ability of its own (Terapagos-Terastal has Tera Shell).
+    const own = data.A ?? [];
+    if (own.length === 1 && before?.A?.join() !== own.join()) {
+      mon.ability = this.dex.names?.abilities?.[own[0]] ?? own[0];
+      mon.confirmed.ability = false;
     }
     return true;
   }
@@ -955,8 +1006,10 @@ export class Battle {
 
     const id = toId(moveName);
     // A move called by something else (Metronome, Sleep Talk, Copycat) isn't in
-    // the user's own set, so don't record it as revealed.
-    const calledByAnother = rest.some((r) => /^\[from\]/.test(r) && !/\[from\]lockedmove/.test(r));
+    // the user's own set, so don't record it as revealed. Nor is Struggle (out
+    // of PP), nor anything a transformed Pokémon uses — those are copies.
+    const calledByAnother = rest.some((r) => /^\[from\]/.test(r) && !/\[from\]lockedmove/.test(r))
+      || id === 'struggle' || mon.volatiles.has('transform');
     if (!calledByAnother) {
       mon.revealedMoves.set(id, (mon.revealedMoves.get(id) ?? 0) + 1);
       if (side?.sinceSwitch?.mon === mon) side.sinceSwitch.moves.push(id);
@@ -1037,8 +1090,12 @@ export class Battle {
   evaluateTurnOrder() {
     const moves = this.turnMoves;
     this.turnMoves = [];
-    // An Illusion broke this turn: whoever moved wasn't who it looked like.
-    if (this.replacedThisTurn) { this.replacedThisTurn = false; return; }
+    // An Illusion broke, or a forme changed, this turn: someone's Speed
+    // wasn't what the snapshot said.
+    const unreliable = this.replacedThisTurn || this.formeChangedThisTurn;
+    this.replacedThisTurn = false;
+    this.formeChangedThisTurn = false;
+    if (unreliable) return;
     if (moves.length !== 2) return; // someone switched, flinched or was asleep
     const [first, second] = moves;
     if (first.slot === second.slot) return; // one side acted twice
@@ -1312,9 +1369,13 @@ export class Battle {
     if (!mon) return false;
     const from = rest.map((r) => /^\[from\]\s?(.*)$/.exec(r)?.[1]).find(Boolean);
     if (!from) {
-      // Its own ability, announced. Beats anything tapped.
-      mon.ability = ability;
-      mon.confirmed.ability = false;
+      // Its own ability, announced. Beats anything tapped — but the first one
+      // shown is the one it came with: Calyrex's As One later announces
+      // "Chilling Neigh" when it boosts, and that isn't a different ability.
+      if (!mon.ability || mon.confirmed.ability) {
+        mon.ability = this.canonicalAbility(mon, ability);
+        mon.confirmed.ability = false;
+      }
       return true;
     }
     // A copied or swapped ability isn't the one it came in with. Trace is

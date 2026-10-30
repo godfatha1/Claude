@@ -172,6 +172,48 @@ fn parse_type(name: &str) -> PokemonType {
     PokemonType::from_str(name).unwrap_or(PokemonType::TYPELESS)
 }
 
+// Status, weather and terrain are read by hand rather than with the engine's
+// own `from_str`. For these three it has no fallback: an unknown name panics,
+// and in the browser a panic is an `unreachable` trap that takes the whole
+// search down. Showdown's own spellings (`tox`, `par`, `slp`) are exactly the
+// unknown names, so every statused Pokémon used to kill the search. Both
+// spellings are accepted here, and anything else reads as "none".
+
+fn parse_status(name: &str) -> PokemonStatus {
+    match name.to_ascii_lowercase().as_str() {
+        "brn" | "burn" => PokemonStatus::BURN,
+        "par" | "paralyze" => PokemonStatus::PARALYZE,
+        "slp" | "sleep" => PokemonStatus::SLEEP,
+        "frz" | "freeze" => PokemonStatus::FREEZE,
+        "psn" | "poison" => PokemonStatus::POISON,
+        "tox" | "toxic" => PokemonStatus::TOXIC,
+        _ => PokemonStatus::NONE,
+    }
+}
+
+fn parse_weather(name: &str) -> Weather {
+    match name.to_ascii_lowercase().as_str() {
+        "sun" | "sunnyday" => Weather::SUN,
+        "rain" | "raindance" => Weather::RAIN,
+        "sand" | "sandstorm" => Weather::SAND,
+        "hail" => Weather::HAIL,
+        "snow" | "snowscape" => Weather::SNOW,
+        "harshsun" | "desolateland" => Weather::HARSHSUN,
+        "heavyrain" | "primordialsea" => Weather::HEAVYRAIN,
+        _ => Weather::NONE,
+    }
+}
+
+fn parse_terrain(name: &str) -> Terrain {
+    match name.to_ascii_lowercase().as_str() {
+        "electricterrain" => Terrain::ELECTRICTERRAIN,
+        "psychicterrain" => Terrain::PSYCHICTERRAIN,
+        "mistyterrain" => Terrain::MISTYTERRAIN,
+        "grassyterrain" => Terrain::GRASSYTERRAIN,
+        _ => Terrain::NONE,
+    }
+}
+
 fn build_mon(m: &InMon) -> Result<Pokemon, String> {
     let id = PokemonName::from_str(&m.id).map_err(|_| format!("unknown species {:?}", m.id))?;
 
@@ -180,7 +222,7 @@ fn build_mon(m: &InMon) -> Result<Pokemon, String> {
 
     let ability = Abilities::from_str(&m.ability).unwrap_or(Abilities::NONE);
     let item = Items::from_str(&m.item).unwrap_or(Items::NONE);
-    let status = PokemonStatus::from_str(&m.status).unwrap_or(PokemonStatus::NONE);
+    let status = parse_status(&m.status);
 
     // Random battles always use a neutral nature and a fixed spread, and the
     // caller has already turned those into final stats, so EVs here only need to
@@ -335,11 +377,11 @@ fn build_state(input: &InState) -> Result<State, String> {
         side_one: build_side(&input.ours)?,
         side_two: build_side(&input.theirs)?,
         weather: StateWeather {
-            weather_type: Weather::from_str(&input.weather).unwrap_or(Weather::NONE),
+            weather_type: parse_weather(&input.weather),
             turns_remaining: input.weather_turns,
         },
         terrain: StateTerrain {
-            terrain_type: Terrain::from_str(&input.terrain).unwrap_or(Terrain::NONE),
+            terrain_type: parse_terrain(&input.terrain),
             turns_remaining: input.terrain_turns,
         },
         trick_room: StateTrickRoom {

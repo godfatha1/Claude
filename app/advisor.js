@@ -53,6 +53,7 @@ export class Advisor {
 
     const worlds = sampleWorlds(this.dex, battle, { count: plan.worlds, teraNow });
     const searched = [];
+    const errors = [];
     const started = performance.now();
 
     for (const world of worlds) {
@@ -61,9 +62,14 @@ export class Advisor {
       } catch (err) {
         // One bad world shouldn't lose the turn's advice.
         console.warn('[advisor] a world failed to search:', err.message);
+        errors.push(err);
       }
     }
-    if (!searched.length) return null;
+    // Every world failing used to come back as "nothing", and the panel kept
+    // showing the last turn's advice as if it were current. Say so instead.
+    if (!searched.length) {
+      return { failed: true, error: String(errors[0]?.message ?? errors[0] ?? 'no worlds'), actions: [], worlds: 0 };
+    }
 
     const pooled = this.pool(searched);
     const named = this.collapseUnseenSwitches(pooled, battle);
@@ -194,12 +200,13 @@ export class Advisor {
       if (!move) continue;
 
       // Clicking into an immunity.
-      if (move.category !== 'Status' && theirActive?.types?.length) {
+      const type = this.moveTypeFor(move, action.choice, ourActive);
+      if (move.category !== 'Status' && type && theirActive?.types?.length) {
         const defending = theirActive.terastallized && theirActive.teraType
           ? [toId(theirActive.teraType).toUpperCase()]
           : theirActive.types;
-        if (this.dex.effectiveness(move.type, defending) === 0) {
-          action.vetoed = `${theirActive.speciesName} is immune to ${move.type.toLowerCase()}`;
+        if (this.dex.effectiveness(type, defending) === 0) {
+          action.vetoed = `${theirActive.speciesName} is immune to ${type.toLowerCase()}`;
           continue;
         }
       }
@@ -217,6 +224,20 @@ export class Advisor {
       if (Boolean(a.vetoed) !== Boolean(b.vetoed)) return a.vetoed ? 1 : -1;
       return b.share - a.share;
     });
+  }
+
+  /**
+   * The type a move really hits as. Tera Blast takes the user's Tera type once
+   * it's Tera'd — or on the turn it Teras, which is what a `-tera` choice is —
+   * so "Tera Blast + Tera Ground" into a Ghost is not a Normal move into an
+   * immunity. Stellar has no chart entry, so it skips the check (null).
+   */
+  moveTypeFor(move, choice, mon) {
+    if (move.id !== 'terablast' && toId(move.name) !== 'terablast') return move.type;
+    const teraing = isTeraChoice(choice) || mon?.terastallized;
+    if (!teraing || !mon?.teraType) return move.type;
+    const tera = toId(mon.teraType).toUpperCase();
+    return tera === 'STELLAR' ? null : tera;
   }
 
   /**
@@ -253,8 +274,9 @@ export class Advisor {
     } else {
       const move = this.dex.move(moveIdOf(action.choice));
       const them = battle.them.active;
-      if (move && them?.types?.length && move.category !== 'Status') {
-        const multiplier = this.dex.effectiveness(move.type, them.types);
+      const type = move && this.moveTypeFor(move, action.choice, battle.us.active);
+      if (move && type && them?.types?.length && move.category !== 'Status') {
+        const multiplier = this.dex.effectiveness(type, them.types);
         if (multiplier >= 2) reasons.push(`${move.name} is super effective`);
         else if (multiplier < 1) reasons.push(`${move.name} is resisted, but still the best line`);
       }

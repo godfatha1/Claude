@@ -439,7 +439,12 @@ function think() {
   setTimeout(() => {
     try {
       const result = advisor.advise(battle, { budget });
-      if (result) showAdvice(result);
+      if (result?.failed) {
+        // Never leave last turn's advice up looking current.
+        $('callMove').textContent = 'search failed'; $('callConf').textContent = '';
+        $('callWhy').textContent = result.error; $('opts').innerHTML = '';
+        engine.recover().catch(() => {});
+      } else if (result) showAdvice(result);
     } catch (err) {
       console.error('[advisor]', err);
       $('cost').textContent = 'search failed';

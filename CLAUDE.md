@@ -26,3 +26,7 @@ Read `STATE.md` before doing anything — it has every decision already made.
   to tell the phone has the latest.
 - After pushing, say it'll be on the phone within about 5 minutes. If a change
   can't reach the phone on its own, say exactly what's needed.
+- **Right now it can't.** The phone runs the desktop session's own patches
+  merged on top of 0.7.1, started with `--no-update` so the pull doesn't wipe
+  them. Until those patches are folded into this branch, every push needs the
+  desktop session to `git fetch` and `git merge` it on the phone. Say so.

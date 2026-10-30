@@ -38,6 +38,21 @@ from assistant.data.sets import SetIndex  # noqa: E402
 
 CATEGORY_CODE = {"Physical": 0, "Special": 1, "Status": 2}
 
+# Mid-battle formes whose stats differ from the base, by base species.
+BATTLE_FORMES = {
+    "eiscue": ("eiscuenoice",),
+    "terapagos": ("terapagosterastal", "terapagosstellar"),
+    "meloetta": ("meloettapirouette",),
+    "minior": ("miniormeteor",),
+    "palafin": ("palafinhero",),
+    "aegislash": ("aegislashblade",),
+    "darmanitan": ("darmanitanzen",),
+    "darmanitangalar": ("darmanitangalarzen",),
+    "zygarde": ("zygardecomplete",),
+    "zygarde10": ("zygardecomplete",),
+    "wishiwashi": ("wishiwashischool",),
+}
+
 # Flags the spread rules need to read, packed into one integer.
 FLAG_FIXED_DAMAGE = 1  # Seismic Toss, Night Shade, Dragon Rage
 FLAG_DAMAGE_CALLBACK = 2  # Counter, Super Fang, Endeavor, Ruination
@@ -179,6 +194,39 @@ def build(fmt: str = "gen9randombattle") -> dict:
             },
             "sp": [sets.min_speed, sets.normal_speed, sets.max_speed] if sets else [0, 0, 0],
         }
+
+    # Formes a Pokémon changes into mid-battle with different stats. The set
+    # data files them under the base, so they'd be read with the base's stats —
+    # Eiscue-Noice with Eiscue's 50 Speed instead of 130. That made turn order
+    # "prove" Choice Scarfs that weren't there. Each gets its own entry: same
+    # sets, its own stats, its own ability where the change brings a new one.
+    import dataclasses
+
+    for base_id, forme_ids in BATTLE_FORMES.items():
+        sets = index.get(base_id)
+        if not sets or base_id not in out_species:
+            continue
+        for forme_id in forme_ids:
+            try:
+                sp = species(forme_id)
+            except KeyError:
+                continue
+            forme_sets = dataclasses.replace(sets, species=sp)
+            entry = dict(out_species[base_id])
+            entry.update({
+                "n": sp.name,
+                "t": list(sp.types),
+                "b": [sp.base_stats[k] for k in STAT_KEYS],
+                "w": sp.weight_kg,
+                "base": base_id,
+                "sp": [forme_sets.min_speed, forme_sets.normal_speed, forme_sets.max_speed],
+            })
+            own = sorted({to_id(a) for a in sp.abilities})
+            if len(own) == 1 and own != entry["A"]:
+                entry["A"] = own
+                entry["r"] = {name: {**r, "a": own, "af": [1.0]} for name, r in entry["r"].items()}
+                names["abilities"][own[0]] = sp.abilities[0]
+            out_species[forme_id] = entry
 
     # Cosmetic formes arrive under a forme name and are filed under the base, so
     # the browser needs the same alias map the Python index builds at load time.
