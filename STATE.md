@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.2
+**Version:** 0.7.3
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -264,8 +264,14 @@ move is the only one the search lets them use).
 ## The panel, top to bottom (collapsed)
 
 1. Their chat (red edge), last two lines.
-2. Everything else said: you, spectators, the timer, the rating line.
-3. The bar: the call and how sure.
+2. Your chat and spectators', plus your opponent leaving, disconnecting,
+   reconnecting or forfeiting (in red, countdown stripped).
+3. Their last move and what it did to you: "Garchomp used Earthquake ·
+   Great Tusk −42%", or "missed" / "no effect"; multi-hits add up.
+4. The bar: the call and how sure.
+
+Deliberately left out (you asked): timer countdowns, the rating line,
+server notices, bot announcements.
 
 The page's bottom padding follows that height so the client's own buttons stay
 clear. The local test server won't let guests chat in battles, so the in-page

@@ -14,7 +14,7 @@ import { Engine } from './engine.js';
 import { Advisor, moveIdOf, isTeraChoice } from './advisor.js';
 import { readOpponent, sampleWorlds } from './infer.js';
 import { renderOpponent, applyTap } from './opponent-ui.js';
-import { readChat } from './chat.js';
+import { readChat, RivalMoves } from './chat.js';
 import { toId } from './data.js';
 
 const BASE = new URL('.', import.meta.url).href;
@@ -47,6 +47,7 @@ const PANEL = `
   <div class="assist-chat" id="assist-chat" aria-live="polite">
     <div class="them" id="assist-chat-them"></div>
     <div class="all" id="assist-chat-all"></div>
+    <div class="move" id="assist-chat-move"></div>
   </div>
   <button class="assist-bar" id="assist-bar" type="button" aria-expanded="false">
     <span class="assist-dot" id="assist-dot"></span>
@@ -92,6 +93,8 @@ let teraNow = false;
 /** Chat for the strip above the bar: the opponent's lines, and everyone else's. */
 const CHAT_KEEP = 2;
 let chatThem = [], chatAll = [];
+/** Their last move and what it did to you, one line right above the bar. */
+let rivalMoves = new RivalMoves(), lastRivalMove = '';
 
 function setCall(text, tone = '') {
   $('assist-call').textContent = text;
@@ -139,11 +142,16 @@ function handleChunk(chunk) {
       battle = new Battle(dex);
       ourName = ourName ?? findOurName();
       chatThem = []; chatAll = [];
+      rivalMoves = new RivalMoves(); lastRivalMove = '';
       renderChat();
       setCall('reading the battle', 'warn');
       continue;
     }
     if (!battle || currentRoom !== room) continue;
+
+    // Read before the battle applies the line, so our HP before the hit is known.
+    const moved = rivalMoves.read(raw, battle);
+    if (moved) { lastRivalMove = moved; renderChat(); }
 
     const said = readChat(raw, { them: battle.them.name, us: ourName });
     if (said) {
@@ -424,13 +432,14 @@ function searchFailed(error) {
     .catch((err) => { console.error('[assist] restart failed:', err); setCall('search failed', 'bad'); });
 }
 
-/** The two chat lines above the bar: theirs on top, everyone else's under it. */
+/** Above the bar: their chat, then everyone else's (and them leaving), then their last move. */
 function renderChat() {
   const line = (m) => (m.who
     ? `<p class="${m.kind}"><b>${esc(m.who)}:</b> ${esc(m.text)}</p>`
     : `<p class="${m.kind}">${esc(m.text)}</p>`);
   $('assist-chat-them').innerHTML = chatThem.map(line).join('');
   $('assist-chat-all').innerHTML = chatAll.map(line).join('');
+  $('assist-chat-move').innerHTML = lastRivalMove ? `<p>${esc(lastRivalMove)}</p>` : '';
   fitBody();
 }
 

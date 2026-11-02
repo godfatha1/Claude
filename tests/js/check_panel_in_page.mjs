@@ -209,7 +209,9 @@ check('it names the teammate to switch to (private feed working)',
 // lines go in where the client's own traffic does: through the early hook.
 // The format is the server's (`|c|☆Name|text`); check_chat.mjs covers parsing.
 await page.evaluate(([r, foeName, ourName]) => window.__assistFeed.listener(
-  `>${r}\n|c|☆${foeName}|glhf from the foe\n|c|☆${ourName}|hi from me`), [foeRoom, `Foe${RUN}`, `Player${RUN}`]);
+  `>${r}\n|c|☆${foeName}|glhf from the foe\n|inactive|${foeName} has 60 seconds left.`
+  + `\n|inactive|${foeName} disconnected and has a minute to reconnect!\n|c|☆${ourName}|hi from me`),
+  [foeRoom, `Foe${RUN}`, `Player${RUN}`]);
 try {
   await page.waitForFunction(() => /glhf from the foe/.test(document.getElementById('assist-chat-them')?.textContent ?? ''),
     null, { timeout: 15000 });
@@ -226,15 +228,28 @@ try {
   check('everything else said shows on the line below it', false,
     `all: "${await page.textContent('#assist-chat-all')}"`);
 }
+const strip = await page.evaluate(() => document.getElementById('assist-chat').textContent);
+check('no timer countdowns in it', !/seconds left/.test(strip), strip);
+check('their disconnect is in it, without the countdown', /disconnected/.test(strip) && !/to reconnect/.test(strip), strip);
+try {
+  await page.waitForFunction(() => / used /.test(document.getElementById('assist-chat-move')?.textContent ?? ''),
+    null, { timeout: 60000 });
+  check('their last move shows right above the bar', true);
+  console.log(`         "${(await page.textContent('#assist-chat-move')).trim()}"`);
+} catch {
+  check('their last move shows right above the bar', false, `"${await page.textContent('#assist-chat-move')}"`);
+}
 const layout = await page.evaluate(() => {
   const chat = document.getElementById('assist-chat').getBoundingClientRect();
   const them = document.getElementById('assist-chat-them').getBoundingClientRect();
   const all = document.getElementById('assist-chat-all').getBoundingClientRect();
+  const move = document.getElementById('assist-chat-move').getBoundingClientRect();
   const bar = document.getElementById('assist-bar').getBoundingClientRect();
   const pad = parseFloat(getComputedStyle(document.body).paddingBottom);
-  return { order: them.bottom <= all.top + 1 && all.bottom <= bar.top + 1, pad, needed: chat.height + bar.height };
+  return { order: them.bottom <= all.top + 1 && all.bottom <= move.top + 1 && move.bottom <= bar.top + 1,
+           pad, needed: chat.height + bar.height };
 });
-check('order is: their chat, other chat, then the bar', layout.order);
+check('order is: their chat, other chat, their last move, then the bar', layout.order);
 check("the page keeps its own buttons clear of it", layout.pad >= layout.needed - 1, JSON.stringify(layout));
 
 // 6. Every move they could have is in the damage list, not only sampled ones.
