@@ -11,7 +11,9 @@
 # running this must be allowed to reach the worker and Cloudflare Access.
 set -euo pipefail
 
-WORKER="${PHONE_WORKER:-https://photoframe.randall216.workers.dev/ssh.txt?key=rayan}"
+# The worker URL carries the access key, so it never goes in this (public)
+# repo. Set it in your own shell: export PHONE_WORKER='https://.../ssh.txt?key=...'
+WORKER="${PHONE_WORKER:?set PHONE_WORKER to the worker URL with its key (see PHONE_ACCESS.md on the desktop)}"
 USER_ON_PHONE="${PHONE_USER:-u0_a568}"
 LOCAL_PORT="${PHONE_LOCAL_PORT:-2222}"
 KEY="${PHONE_SSH_KEY:-$HOME/.ssh/id_ed25519}"
