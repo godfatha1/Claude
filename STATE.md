@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.3
+**Version:** 0.7.6
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -256,6 +256,21 @@ wasn't being handed over:
   later announces "Chilling Neigh"; that no longer replaces it, and "As One"
   maps to "As One (Glastrier)".
 
+- **The engine's last-move tracking is on.** It only tracks last move and
+  damage dealt when something in the position needs them, decided by
+  `set_conditional_mechanics()`, which its own loader calls and our
+  hand-built state never did. With it off, Fake Out worked every turn in the
+  search, Counter and friends never knew the damage, and a benched Encore
+  user could Encore a side whose last action was a switch, which panicked the
+  engine several turns down the tree — 6 crashes in 25 deep games. Fixed in
+  the wrapper; two of those positions are kept in `tests/js/fixtures/`.
+- **`check_engine_never_crashes.mjs`** plays real games, replays each from
+  one player's own feed, and runs every position through search (at deep),
+  damage and options. That's what found the Encore crash; one watched game
+  at a time never would.
+- The private-feed handling moved from the panel into `Battle.applyRequest`
+  so the tests replay exactly what the panel does.
+
 `tests/js/check_facts_reach_engine.mjs` proves each one arrives and changes the
 legal options (an Encore leaves one move; trapped removes every switch; Tera
 Ground makes Headlong Rush hit harder; Slaking loafs after attacking; a called
@@ -268,7 +283,17 @@ move is the only one the search lets them use).
    reconnecting or forfeiting (in red, countdown stripped).
 3. Their last move and what it did to you: "Garchomp used Earthquake ·
    Great Tusk −42%", or "missed" / "no effect"; multi-hits add up.
-4. The bar: the call and how sure.
+4. Their possible moves, one thin row, type-coloured like the games: damage
+   to you, and the odds for any not seen or confirmed. Swipe for more; tap
+   works as before (have it → next turn → undo). They're no longer repeated
+   in the collapsed menu, which keeps your own damage list.
+5. The bar: the call and how sure.
+
+When the game ends, row 4 becomes a **gg** button. It goes through the early
+hook in `serve.py`, which only passes a plain chat line into a battle room:
+anything starting with `/` or `!`, or containing `|` or a newline, is
+refused, so it still can't choose a move or forfeit for you. Search depth
+defaults to **deep**.
 
 Deliberately left out (you asked): timer countdowns, the rating line,
 server notices, bot announcements.

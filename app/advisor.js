@@ -63,6 +63,8 @@ export class Advisor {
         // One bad world shouldn't lose the turn's advice.
         console.warn('[advisor] a world failed to search:', err.message);
         errors.push(err);
+        // Kept so a crash can be reproduced from the exact position.
+        this.lastFailure = { error: String(err.message ?? err), world, turn: battle.turn, log: battle.log.slice(-60) };
       }
     }
     // Every world failing used to come back as "nothing", and the panel kept

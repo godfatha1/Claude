@@ -1444,6 +1444,66 @@ export class Battle {
     return true;
   }
 
+  /**
+   * Fill in our own side from the client's private feed (`|request|`).
+   *
+   * This is exact: our species, moves, items, HP and Tera type, not an
+   * inference — the one thing watching from outside could never get. For our
+   * active it also says which moves are usable right now, PP, whether we're
+   * trapped, and whether we can Tera; under Encore, Taunt, Disable or a Choice
+   * lock that list is what the client greys out, so it's taken as-is.
+   * Returns false if the request had no team in it.
+   */
+  applyRequest(request) {
+    if (!request?.side?.pokemon) return false;
+    const slot = request.side.id; // 'p1' or 'p2'
+    if (slot && this.sides[slot]) this.ourSlot = slot;
+
+    const ours = this.us;
+    for (const entry of request.side.pokemon) {
+      const details = entry.details || '';
+      const species = details.split(',')[0].trim();
+      let mon = ours.find(species);
+      // The ones not yet on the field: the whole bench, by name, from turn one.
+      if (!mon) {
+        const level = /L(\d+)/.exec(details)?.[1];
+        mon = new TrackedMon(this.dex, species, level ? parseInt(level, 10) : null,
+          /\bF\b/.test(details) ? 'F' : /\bM\b/.test(details) ? 'M' : null);
+        if (!mon.isKnown) continue;
+        ours.team.push(mon);
+      }
+      for (const move of entry.moves ?? []) {
+        if (!mon.revealedMoves.has(move)) mon.revealedMoves.set(move, 0);
+      }
+      if (entry.item) mon.item = entry.item;
+      if (entry.ability || entry.baseAbility) mon.ability = entry.ability || entry.baseAbility;
+      if (entry.teraType) mon.teraType = entry.teraType;
+      const condition = String(entry.condition ?? '');
+      const hp = /^(\d+)\/(\d+)/.exec(condition);
+      if (hp) {
+        mon.hpExact = parseInt(hp[1], 10);
+        mon.hpIsExact = true;
+        mon.hpPercent = (mon.hpExact / parseInt(hp[2], 10)) * 100;
+      }
+      if (/fnt/.test(condition)) mon.fainted = true;
+    }
+
+    const active = request.active?.[0];
+    const mon = ours.active;
+    if (active && mon) {
+      const listed = active.moves ?? [];
+      const usable = new Set(listed.filter((m) => !m.disabled).map((m) => m.id ?? toId(m.move)));
+      mon.requestDisabled = new Set([...mon.revealedMoves.keys()].filter((id) => !usable.has(id)));
+      for (const m of listed) {
+        const id = m.id ?? toId(m.move);
+        if (id && typeof m.pp === 'number') mon.pp.set(id, m.pp);
+      }
+      ours.trapped = Boolean(active.trapped);
+      ours.canTera = active.canTerastallize || null;
+    }
+    return true;
+  }
+
   /** Everything about a side's active slot the engine takes, beyond the team. */
   slotFactsFor(side) {
     const mon = side.active;

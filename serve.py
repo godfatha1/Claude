@@ -84,17 +84,29 @@ DROP_FROM_BROWSER = {
 # team — has been and gone. So the wrapper goes in first and keeps everything it
 # hears; the panel picks the backlog up when it loads.
 #
-# It only listens. Messages pass through untouched and nothing is ever sent.
+# It listens, and can say one thing: a plain chat line in a battle room, when
+# you tap the panel's gg button. Commands (anything starting with / or !) are
+# refused, so it can never choose a move, forfeit, or do anything else for you.
 HOOK = """<script>
 (function () {
   if (window.__assistFeed) return;
-  var feed = window.__assistFeed = { lines: [], listener: null };
+  var feed = window.__assistFeed = { lines: [], listener: null, socket: null };
+  feed.say = function (room, text) {
+    var s = feed.socket;
+    text = String(text || '');
+    if (!s || s.readyState !== 1) return false;
+    if (!/^battle-[a-z0-9-]+$/.test(String(room))) return false;
+    if (!text || text.length > 300 || /^[\\/!]/.test(text) || /[|\\n\\r]/.test(text)) return false;
+    s.send(room + '|' + text);
+    return true;
+  };
   var Original = window.WebSocket;
   if (!Original) return;
   function Wrapped(url, protocols) {
     var socket = protocols === undefined
       ? new Original(url) : new Original(url, protocols);
     if (/psim\\.us|showdown/i.test(String(url))) {
+      feed.socket = socket;
       socket.addEventListener('message', function (event) {
         var data = String(event.data);
         if (feed.listener) { try { feed.listener(data); } catch (e) { console.warn(e); } }

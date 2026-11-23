@@ -37,6 +37,10 @@ if curl -sS --max-time 4 -o /dev/null "http://localhost:8111/" 2>/dev/null; then
   echo
   echo "=== facts the tracker knows reach the engine ==="
   node tests/js/check_facts_reach_engine.mjs || fail=1
+
+  echo
+  echo "=== the engine survives every position real games produce ==="
+  node tests/js/check_engine_never_crashes.mjs "${CRASH_GAMES:-10}" || fail=1
 else
   echo "  skipped — no Showdown server on :8111"
   echo "  start one with: scripts/local_server.sh"

@@ -277,8 +277,8 @@ input[type=text]::placeholder{color:var(--fg-faint)}
     <div class="sheetfoot">
       <div class="seg" role="group" aria-label="How hard to think">
         <button type="button" data-budget="quick" aria-pressed="false">quick</button>
-        <button type="button" data-budget="normal" aria-pressed="true">normal</button>
-        <button type="button" data-budget="deep" aria-pressed="false">deep</button>
+        <button type="button" data-budget="normal" aria-pressed="false">normal</button>
+        <button type="button" data-budget="deep" aria-pressed="true">deep</button>
       </div>
       <span class="cost" id="cost"></span>
       <button class="btn ghost small" id="stopBtn">Stop</button>
@@ -325,7 +325,7 @@ const setError = (text) => {
 
 let dex = null, engine = null, advisor = null;
 let spectator = null, battle = null;
-let budget = 'normal', thinking = false, dirty = false;
+let budget = 'deep', thinking = false, dirty = false;
 
 // ---------------------------------------------------------- the game frame
 

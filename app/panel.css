@@ -252,3 +252,48 @@ body { padding-bottom: 58px !important; }
 .assist-dmg .dr.next { background: rgba(250, 178, 25, .14); border-radius: 4px; }
 .assist-dmg .tag { font-style: normal; font-size: 10px; font-weight: 700; color: #d0730b;
                    border: 1px solid #d0730b; border-radius: 3px; padding: 0 4px; margin-left: 4px; }
+
+/* --------------- their moves, a thin row right above the bar ------------- */
+/* Game-style: each move in its type's colour, softened. One line; swipe for more. */
+
+.assist-moves {
+  flex: none; display: flex; align-items: center; gap: 5px;
+  padding: 5px 13px; overflow-x: auto; scrollbar-width: none;
+  border-bottom: 1px solid #e3e9f2; -webkit-overflow-scrolling: touch;
+}
+.assist-moves::-webkit-scrollbar { display: none; }
+.assist-moves:empty { display: none; }
+@media (prefers-color-scheme: dark) { .assist-moves { border-bottom-color: #232d3a; } }
+.assist-moves .lb { flex: none; font-size: 10.5px; color: #8b97a8; margin-right: 2px; white-space: nowrap; }
+.assist-moves .mv {
+  all: unset; box-sizing: border-box; flex: none; cursor: pointer;
+  display: inline-flex; align-items: baseline; gap: 5px; height: 24px; padding: 0 8px; line-height: 24px;
+  border-radius: 6px; font-size: 11.5px; white-space: nowrap; color: #111620;
+  background: color-mix(in srgb, var(--t) 16%, #fff);
+  border: 1px solid color-mix(in srgb, var(--t) 55%, transparent);
+  border-left: 3px solid var(--t);
+  -webkit-tap-highlight-color: transparent;
+}
+@media (prefers-color-scheme: dark) {
+  .assist-moves .mv { color: #eef2f8; background: color-mix(in srgb, var(--t) 18%, #161c25); }
+}
+.assist-moves .mv:focus-visible { outline: 2px solid #2a5fd6; outline-offset: 1px; }
+.assist-moves .mv .mn { font-weight: 600; }
+.assist-moves .mv .md { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10.5px; }
+.assist-moves .mv .ml { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: 10px; opacity: .65; }
+.assist-moves .mv .ko { font-size: 10px; font-weight: 700; color: #d03b3b; }
+/* not seen or confirmed: still a guess */
+.assist-moves .mv.maybe { border-style: dashed; border-left-style: solid; }
+.assist-moves .mv.maybe .mn { font-weight: 500; }
+/* you think they click this one this turn */
+.assist-moves .mv.next { box-shadow: 0 0 0 2px #d0730b; }
+.assist-moves .mv.next .mn::after { content: ' →'; color: #d0730b; }
+
+.assist-moves .gg {
+  all: unset; box-sizing: border-box; cursor: pointer; flex: 1; text-align: center;
+  height: 30px; line-height: 30px; border-radius: 7px; font-weight: 700; font-size: 14px;
+  background: #2a5fd6; color: #fff;
+}
+.assist-moves .gg:disabled { background: transparent; color: #0ca30c; cursor: default; }
+@media (prefers-color-scheme: dark) { .assist-moves .gg { background: #5b8ef5; color: #0b1017; } }
+.assist-moves .gg:focus-visible { outline: 2px solid #2a5fd6; outline-offset: 2px; }

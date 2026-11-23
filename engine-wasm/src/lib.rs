@@ -369,11 +369,19 @@ fn build_side(s: &InSide) -> Result<Side, String> {
         }
     };
 
+    // An Encore needs a move to lock onto; the engine panics on one without.
+    // That happens when the move it locked isn't in the set we sampled.
+    if side.volatile_statuses.contains(&PokemonVolatileStatus::ENCORE)
+        && !matches!(side.last_used_move, LastUsedMove::Move(_))
+    {
+        side.volatile_statuses.remove(&PokemonVolatileStatus::ENCORE);
+    }
+
     Ok(side)
 }
 
 fn build_state(input: &InState) -> Result<State, String> {
-    Ok(State {
+    let mut state = State {
         side_one: build_side(&input.ours)?,
         side_two: build_side(&input.theirs)?,
         weather: StateWeather {
@@ -389,7 +397,16 @@ fn build_state(input: &InState) -> Result<State, String> {
             turns_remaining: input.trick_room_turns,
         },
         ..Default::default()
-    })
+    };
+    // The engine only tracks each side's last move, and damage dealt, when
+    // something in the position needs it (Encore, Fake Out, Counter...), and it
+    // decides that here. Its own loader calls this; building the state by hand
+    // has to as well. Without it, last-move tracking stayed off during the
+    // search: Fake Out worked every turn, Counter never knew the damage, and an
+    // Encore from a teammate could land on a side whose last action was a
+    // switch, which panics the engine a few turns down the tree.
+    state.set_conditional_mechanics();
+    Ok(state)
 }
 
 fn rank(side: &Side, results: &[MctsSideResult], total: u32) -> Vec<Ranked> {

@@ -241,34 +241,85 @@ try {
 }
 const layout = await page.evaluate(() => {
   const chat = document.getElementById('assist-chat').getBoundingClientRect();
+  const moves = document.getElementById('assist-moves').getBoundingClientRect();
   const them = document.getElementById('assist-chat-them').getBoundingClientRect();
   const all = document.getElementById('assist-chat-all').getBoundingClientRect();
   const move = document.getElementById('assist-chat-move').getBoundingClientRect();
   const bar = document.getElementById('assist-bar').getBoundingClientRect();
   const pad = parseFloat(getComputedStyle(document.body).paddingBottom);
-  return { order: them.bottom <= all.top + 1 && all.bottom <= move.top + 1 && move.bottom <= bar.top + 1,
-           pad, needed: chat.height + bar.height };
+  // The moves row hides itself while their Pokémon is fainted and nothing is out.
+  const rowShown = moves.height > 0;
+  return { order: them.bottom <= all.top + 1 && all.bottom <= move.top + 1
+                  && (rowShown ? move.bottom <= moves.top + 1 && moves.bottom <= bar.top + 1 : move.bottom <= bar.top + 1),
+           pad, needed: chat.height + moves.height + bar.height };
 });
-check('order is: their chat, other chat, their last move, then the bar', layout.order);
+check('order is: their chat, other chat, their last move, their moves, then the bar', layout.order);
 check("the page keeps its own buttons clear of it", layout.pad >= layout.needed - 1, JSON.stringify(layout));
 
-// 6. Every move they could have is in the damage list, not only sampled ones.
-let rowsMatch = null;
-for (let i = 0; i < 20 && !rowsMatch?.ok; i++) {
-  rowsMatch = await page.evaluate(() => {
+// 6. Their moves sit in a row above the bar: every one they could have, with damage.
+let rowMatch = null;
+for (let i = 0; i < 20 && !rowMatch?.ok; i++) {
+  rowMatch = await page.evaluate(() => {
     const them = window.__assist?.battle?.them?.active;
     if (!them || them.fainted) return { ok: false, why: 'no live opponent' };
     const want = [...them.moveOdds().keys()].sort();
-    const got = [...document.querySelectorAll('#assist-dmg button.dr.theirs')].map((b) => b.dataset.id).sort();
-    const unseenWithOdds = [...document.querySelectorAll('#assist-dmg button.dr.guess .odds')].length;
-    return { ok: want.length > 0 && want.join() === got.join(), want, got, unseenWithOdds };
+    const chips = [...document.querySelectorAll('#assist-moves .mv')];
+    const got = chips.map((b) => b.dataset.id).sort();
+    const withDamage = chips.filter((b) => b.querySelector('.md')).length;
+    return { ok: want.length > 0 && want.join() === got.join() && withDamage === chips.length, want, got, withDamage,
+             readHasMoves: [...document.querySelectorAll('#assist-read .chips .lbl')].some((l) => l.textContent === 'Moves') };
   });
-  if (!rowsMatch.ok) await new Promise((r) => setTimeout(r, 1000));
+  if (!rowMatch.ok) await new Promise((r) => setTimeout(r, 1000));
 }
-check('every move they could have has a damage row', rowsMatch.ok, JSON.stringify(rowsMatch));
-console.log(`         ${rowsMatch.got?.length ?? 0} of their moves listed, ${rowsMatch.unseenWithOdds ?? 0} with a "likely" figure`);
+check('every move they could have is in the row above the bar, with damage', rowMatch.ok, JSON.stringify(rowMatch));
+check('…and not repeated in the collapsed menu', rowMatch.readHasMoves === false);
+console.log(`         ${(await page.textContent('#assist-moves')).replace(/\s+/g, ' ').trim().slice(0, 110)}`);
 
-// 7. Clean?
+const deep = await page.evaluate(() => ({
+  pressed: document.querySelector('#assist-seg [aria-pressed="true"]')?.dataset.budget,
+  cost: document.getElementById('assist-cost').textContent,
+}));
+check('deep is on from the start', deep.pressed === 'deep' && /^6 sets/.test(deep.cost), JSON.stringify(deep));
+
+await page.screenshot({ path: 'tests/js/panel-moves.png', fullPage: false });
+
+// 7. At the end, a gg button that says gg in the battle room.
+await page.evaluate(() => {
+  window.__sent = [];
+  const send = WebSocket.prototype.send;
+  WebSocket.prototype.send = function (data) { window.__sent.push(String(data)); return send.call(this, data); };
+});
+foe.send(`${foeRoom}|/forfeit`);
+try {
+  await page.waitForSelector('#assist-gg', { timeout: 30000 });
+  check('a gg button shows when the game ends', true);
+  await page.click('#assist-gg');
+  const gg = await page.evaluate(() => ({ sent: window.__sent, label: document.getElementById('assist-gg')?.textContent }));
+  check('tapping it says gg in the battle room, and nothing else',
+    // (The stand-in client keeps sending its own /choose lines; those aren't ours.)
+    gg.sent.filter((m) => !/\|\/choose /.test(m)).join() === `${foeRoom}|gg` && gg.label === 'gg sent', JSON.stringify(gg));
+  const refused = await page.evaluate((r) => [window.__assistFeed.say(r, '/forfeit'), window.__assistFeed.say(r, 'a|b'),
+    window.__assistFeed.say('lobby', 'hi')], foeRoom);
+  check('the hook refuses commands and anything outside a battle room', refused.every((x) => x === false), JSON.stringify(refused));
+  await new Promise((r) => setTimeout(r, 3000));
+  const bar = (await page.textContent('#assist-call')).trim();
+  check('the bar says who won, not a stale move', / won/.test(bar), bar);
+  const leftover = await page.evaluate(() => document.querySelectorAll('#assist-opts li').length);
+  check("last turn's options are cleared", leftover === 0, `${leftover} left`);
+} catch (err) {
+  check('a gg button shows when the game ends', false, `${err.message} — bar: "${await page.textContent('#assist-call')}"`);
+}
+
+// If the engine failed on a position, keep it so it can be reproduced.
+const failure = await page.evaluate(() => window.__assist?.advisor?.lastFailure ?? null).catch(() => null);
+if (failure) {
+  mkdirSync('tests/js/engine-failures', { recursive: true });
+  const name = `tests/js/engine-failures/${Date.now()}.json`;
+  writeFileSync(name, JSON.stringify(failure, null, 1));
+  console.log(`\n  the engine failed on a position: saved to ${name}`);
+}
+
+// 8. Clean?
 const real = errors.filter((e) => !/favicon|Failed to load resource/i.test(e));
 check('no page errors', real.length === 0, real.slice(0, 3).join(' / '));
 

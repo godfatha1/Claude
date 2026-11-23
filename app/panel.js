@@ -9,7 +9,7 @@
 // straight through and only looks at what comes back — it cannot send a move.
 
 import { Dex } from './data.js';
-import { Battle, TrackedMon } from './battle.js';
+import { Battle } from './battle.js';
 import { Engine } from './engine.js';
 import { Advisor, moveIdOf, isTeraChoice } from './advisor.js';
 import { readOpponent, sampleWorlds } from './infer.js';
@@ -49,6 +49,7 @@ const PANEL = `
     <div class="all" id="assist-chat-all"></div>
     <div class="move" id="assist-chat-move"></div>
   </div>
+  <div class="assist-moves" id="assist-moves" aria-label="their possible moves"></div>
   <button class="assist-bar" id="assist-bar" type="button" aria-expanded="false">
     <span class="assist-dot" id="assist-dot"></span>
     <span class="assist-call" id="assist-call">starting up</span>
@@ -72,8 +73,8 @@ const PANEL = `
     <div class="assist-foot">
       <div class="assist-seg" id="assist-seg">
         <button type="button" data-budget="quick">quick</button>
-        <button type="button" data-budget="normal" aria-pressed="true">normal</button>
-        <button type="button" data-budget="deep">deep</button>
+        <button type="button" data-budget="normal">normal</button>
+        <button type="button" data-budget="deep" aria-pressed="true">deep</button>
       </div>
       <span class="assist-cost" id="assist-cost"></span>
       <span class="assist-ver" id="assist-ver" title="the version this phone is running"></span>
@@ -87,7 +88,12 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
 
 let dex = null, engine = null, advisor = null;
 let battle = null, ourName = null;
-let budget = 'normal', thinking = false, dirty = false;
+// Deep from the start: it's what you'd pick anyway, and a turn has the time.
+let budget = 'deep', thinking = false, dirty = false;
+/** Damage both ways for the active pair, worked out each think, for the moves row. */
+let threat = null;
+/** We're a player in this battle (we've had a request), so gg can be said. */
+let weArePlaying = false, ggSent = false;
 /** The Tera box: advice and damage as if we Tera this turn. */
 let teraNow = false;
 /** Chat for the strip above the bar: the opponent's lines, and everyone else's. */
@@ -143,6 +149,7 @@ function handleChunk(chunk) {
       ourName = ourName ?? findOurName();
       chatThem = []; chatAll = [];
       rivalMoves = new RivalMoves(); lastRivalMove = '';
+      threat = null; weArePlaying = false; ggSent = false;
       renderChat();
       setCall('reading the battle', 'warn');
       continue;
@@ -188,66 +195,10 @@ function applyOwnTeam(line) {
   let request;
   try { request = JSON.parse(line.slice('|request|'.length)); }
   catch { return; }
-  if (!request?.side?.pokemon) return;
-
-  // Which side are we? The request says so, and so does our name.
-  const slot = request.side.id; // 'p1' or 'p2'
-  if (slot && battle.sides[slot]) battle.ourSlot = slot;
+  if (!battle.applyRequest(request)) return;
+  weArePlaying = true;
   if (request.side.name) ourName = request.side.name;
-
-  const ours = battle.us;
-  for (const entry of request.side.pokemon) {
-    const details = entry.details || '';
-    const species = details.split(',')[0].trim();
-    let mon = ours.find(species);
-
-    // Add the ones we haven't seen on the field yet. This is the real gain
-    // from being in the page: your whole bench, by name, from turn one. From
-    // outside we could only ever say "switch out" and let you pick.
-    if (!mon) {
-      const level = /L(\d+)/.exec(details)?.[1];
-      mon = new TrackedMon(dex, species, level ? parseInt(level, 10) : null,
-                           /\bF\b/.test(details) ? 'F' : /\bM\b/.test(details) ? 'M' : null);
-      if (!mon.isKnown) continue;
-      ours.team.push(mon);
-    }
-    for (const move of entry.moves ?? []) {
-      if (!mon.revealedMoves.has(move)) mon.revealedMoves.set(move, 0);
-    }
-    if (entry.item) mon.item = entry.item;
-    if (entry.ability || entry.baseAbility) mon.ability = entry.ability || entry.baseAbility;
-    // Our real Tera type, rather than the one the set data guesses.
-    if (entry.teraType) mon.teraType = entry.teraType;
-    const condition = String(entry.condition ?? '');
-    const hp = /^(\d+)\/(\d+)/.exec(condition);
-    if (hp) {
-      mon.hpExact = parseInt(hp[1], 10);
-      mon.hpIsExact = true;
-      mon.hpPercent = (mon.hpExact / parseInt(hp[2], 10)) * 100;
-    }
-    if (/fnt/.test(condition)) mon.fainted = true;
-  }
-
-  // The request also says, for our active, exactly which moves can be used
-  // right now and how much PP is left. Under Encore, Taunt, Disable or a Choice
-  // lock this is the authoritative list — it's what the client greys out — so
-  // it goes to the engine as-is rather than being inferred.
-  const active = request.active?.[0];
-  const mon = ours.active;
-  if (active && mon) {
-    const listed = active.moves ?? [];
-    const usable = new Set(listed.filter((m) => !m.disabled).map((m) => m.id ?? toId(m.move)));
-    mon.requestDisabled = new Set(
-      [...mon.revealedMoves.keys()].filter((id) => !usable.has(id)));
-    for (const m of listed) {
-      const id = m.id ?? toId(m.move);
-      if (id && typeof m.pp === 'number') mon.pp.set(id, m.pp);
-    }
-    ours.trapped = Boolean(active.trapped);
-    // Whether we can Tera right now, and into what. Gone once it's been used.
-    ours.canTera = active.canTerastallize || null;
-    if (!ours.canTera) teraNow = false;
-  }
+  if (!battle.us.canTera) teraNow = false;
   queueThink();
 }
 
@@ -269,6 +220,7 @@ function think() {
     $('assist-conf').textContent = '';
     $('assist-why').textContent = '';
     $('assist-dmg').innerHTML = '';
+    renderMoves();
     return;
   }
 
@@ -277,6 +229,9 @@ function think() {
 
   setTimeout(() => {
     try {
+      // The game can end between queueing this and running it; a search
+      // finishing after that must not draw over the result.
+      if (battle.ended) { showEnd(); return; }
       showDamage();
       const result = advisor.advise(battle, { budget, teraNow });
       if (result?.failed) searchFailed(result.error);
@@ -324,6 +279,22 @@ function showEnd() {
   $('assist-conf').textContent = '';
   $('assist-why').textContent = mine?.reason ?? '';
   $('assist-tera-row').hidden = true;
+  // Nothing left to choose: don't leave the last turn's options up.
+  $('assist-opts').innerHTML = '';
+  $('assist-dmg').innerHTML = '';
+  renderMoves();
+}
+
+/**
+ * Say "gg" in the battle room. Goes through the page's own connection, via a
+ * hook that only passes plain chat lines (never a command), or the client's
+ * own send if the hook isn't there.
+ */
+function sendGG() {
+  if (!room) return false;
+  if (window.__assistFeed?.say) return window.__assistFeed.say(room, 'gg');
+  if (typeof window.app?.send === 'function') { window.app.send('gg', room); return true; }
+  return false;
 }
 
 /**
@@ -335,7 +306,7 @@ function showEnd() {
 function showDamage() {
   const us = battle.us.active, them = battle.them.active;
   const box = $('assist-dmg');
-  if (!us || !them || !engine || us.fainted || them.fainted) { box.innerHTML = ''; return; }
+  if (!us || !them || !engine || us.fainted || them.fainted) { box.innerHTML = ''; renderMoves(); return; }
 
   const worlds = sampleWorlds(dex, battle, { count: 4, teraNow });
   // Every move they could have, not only the four each sampled set happened
@@ -371,6 +342,8 @@ function showDamage() {
       for (const m of d.theirs) fold(theirs, m, d.ourMaxhp);
     }
   }
+  threat = { them, us, theirs, odds };
+  renderMoves();
   if (!ours.size && !theirs.size) { box.innerHTML = ''; return; }
 
   const dmgText = (e) => (e.hi === 0 ? '—' : e.lo === e.hi ? `${e.hi}%` : `${e.lo}–${e.hi}%`);
@@ -383,33 +356,70 @@ function showDamage() {
       <span class="b"><i style="width:${Math.min(100, e.hi)}%"></i></span>
     </div>`;
   };
-  // Theirs: what it does to you, and for anything not seen or confirmed, how
-  // likely they are to have it at all. Tap works like the chips above.
-  const known = new Set(them.revealedMoves.keys());
-  const theirRow = (e, targetHp) => {
-    const ko = koText(e, targetHp);
-    const sure = known.has(e.id);
-    const next = them.nextMove === e.id;
-    const chance = Math.round((odds.get(e.id) ?? 0) * 100);
-    return `<button type="button" class="dr theirs ${sure ? 'sure' : 'guess'} ${next ? 'next' : ''}"
-        data-kind="move" data-id="${esc(e.id)}">
-      <span class="n">${esc(dex.move(e.id)?.name ?? e.id)}${next ? ' <i class="tag">next</i>' : ''}</span>
-      <span class="p">${dmgText(e)}${ko ? ` <em>${ko}</em>` : ''}${sure ? '' : ` <span class="odds">${chance}% likely</span>`}</span>
-      <span class="b"><i style="width:${Math.min(100, e.hi)}%"></i></span>
-    </button>`;
-  };
-  const theirRows = [...theirs.values()].sort((a, b) =>
-    Number(known.has(b.id)) - Number(known.has(a.id))
-    || (odds.get(b.id) ?? 0) - (odds.get(a.id) ?? 0)
-    || b.hi - a.hi);
   const ourTag = teraNow && us.teraType ? ` (Tera ${cap(us.teraType)})` : '';
 
   box.innerHTML = `
     <div class="hd">Your moves${esc(ourTag)} → ${esc(them.speciesName)} at ${Math.round(them.hpPercent)}%</div>
     ${[...ours.values()].map((e) => ourRow(e, Math.round(them.hpPercent))).join('')}
-    <div class="hd">Their moves → ${esc(us.speciesName)} at ${Math.round(us.hpPercent)}%</div>
-    ${theirRows.map((e) => theirRow(e, Math.round(us.hpPercent))).join('')}
-    <div class="hint">of max HP · tap one of theirs: they have it · again: they use it next turn · again: undo</div>`;
+    <div class="hint">of max HP · their moves are in the row above the bar</div>`;
+}
+
+/** Type colours for the moves row, the games' own, softened by the CSS. */
+const TYPE_COLOR = {
+  NORMAL: '#a8a77a', FIRE: '#ee8130', WATER: '#6390f0', ELECTRIC: '#f7d02c', GRASS: '#7ac74c',
+  ICE: '#96d9d6', FIGHTING: '#c22e28', POISON: '#a33ea1', GROUND: '#e2bf65', FLYING: '#a98ff3',
+  PSYCHIC: '#f95587', BUG: '#a6b91a', ROCK: '#b6a136', GHOST: '#735797', DRAGON: '#6f35fc',
+  DARK: '#705746', STEEL: '#b7b7ce', FAIRY: '#d685ad',
+};
+
+/**
+ * Their moves, in a thin row right above the bar: what each does to you, and
+ * for anything not seen or confirmed, how likely they are to have it. Tap a
+ * chip: they have it; again: they'll use it next turn; again: undo.
+ *
+ * Drawn from the last think's damage when it was for this same pair, and with
+ * the odds alone when the pair just changed and the numbers haven't caught up.
+ * When the game's over, the row is the gg button instead.
+ */
+function renderMoves() {
+  const row = $('assist-moves');
+  if (!row) return;
+  if (battle?.ended) {
+    row.innerHTML = weArePlaying
+      ? `<button type="button" class="gg" id="assist-gg" ${ggSent ? 'disabled' : ''}>${ggSent ? 'gg sent' : 'gg'}</button>`
+      : '';
+    fitBody();
+    return;
+  }
+  const them = battle?.them?.active;
+  if (!them || them.fainted) { row.innerHTML = ''; fitBody(); return; }
+
+  const fresh = threat && threat.them === them && threat.us === battle.us.active;
+  const odds = fresh ? threat.odds : them.moveOdds();
+  const known = new Set(them.revealedMoves.keys());
+  const ourHp = Math.round(battle.us.active?.hpPercent ?? 100);
+  const ids = [...odds.keys()].sort((a, b) =>
+    Number(b === them.nextMove) - Number(a === them.nextMove)
+    || Number(known.has(b)) - Number(known.has(a))
+    || (odds.get(b) ?? 0) - (odds.get(a) ?? 0));
+
+  row.innerHTML = `<span class="lb">${esc(them.speciesName)}</span>` + ids.map((id) => {
+    const move = dex.move(id);
+    const e = fresh ? threat.theirs.get(id) : null;
+    const dmg = !e ? '' : e.hi === 0 ? '—' : e.lo === e.hi ? `${e.hi}%` : `${e.lo}–${e.hi}%`;
+    const ko = e && e.hi > 0 ? (e.lo >= ourHp ? 'KO' : e.hi >= ourHp ? 'KO?' : '') : '';
+    const sure = known.has(id);
+    const state = them.nextMove === id ? 'next' : sure ? 'sure' : 'maybe';
+    const color = TYPE_COLOR[String(move?.type ?? '').toUpperCase()] ?? '#98a3b3';
+    return `<button type="button" class="mv ${state}" style="--t:${color}" data-kind="move" data-id="${esc(id)}"
+        title="${esc(`${move?.name ?? id} · ${move?.type?.toLowerCase() ?? ''}${sure ? '' : ` · ${Math.round((odds.get(id) ?? 0) * 100)}% likely`}`)}">`
+      + `<span class="mn">${esc(move?.name ?? id)}</span>`
+      + (dmg ? `<span class="md">${dmg}</span>` : '')
+      + (ko ? `<span class="ko">${ko}</span>` : '')
+      + (sure ? '' : `<span class="ml">${Math.round((odds.get(id) ?? 0) * 100)}%</span>`)
+      + `</button>`;
+  }).join('');
+  fitBody();
 }
 
 /**
@@ -448,7 +458,8 @@ function renderChat() {
  * changes as chat comes and goes, so the page's bottom padding follows it.
  */
 function fitBody() {
-  const h = ($('assist-chat')?.offsetHeight ?? 0) + ($('assist-bar')?.offsetHeight ?? 0);
+  const h = ($('assist-chat')?.offsetHeight ?? 0) + ($('assist-moves')?.offsetHeight ?? 0)
+    + ($('assist-bar')?.offsetHeight ?? 0);
   if (h > 0) document.body.style.setProperty('padding-bottom', `${h + 4}px`, 'important');
 }
 
@@ -491,7 +502,9 @@ function render() {
   renderTera();
   if (battle.ended) showEnd();
   const read = readOpponent(battle);
-  if (read) $('assist-read').innerHTML = renderOpponent(read, dex);
+  // Their moves live in the row above the bar now, not in here.
+  if (read) $('assist-read').innerHTML = renderOpponent(read, dex, { moves: false });
+  renderMoves();
   const notes = battle.notes.slice(-3).reverse();
   $('assist-notes').innerHTML = notes
     .map((n) => `<li>${esc(n.text)}</li>`).join('');
@@ -509,13 +522,20 @@ async function start() {
     $('assist-bar').setAttribute('aria-expanded', String(open));
   });
   // Tapping a chip confirms (or un-confirms) a fact and re-runs the search.
-  for (const id of ['assist-read', 'assist-dmg']) {
+  for (const id of ['assist-read', 'assist-dmg', 'assist-moves']) {
     $(id).addEventListener('click', (e) => {
       e.stopPropagation();
       if (!battle?.them?.active) return;
       if (applyTap(e.target, battle.them.active)) { render(); queueThink(); }
     });
   }
+  // The gg button, once the game's over.
+  $('assist-moves').addEventListener('click', (e) => {
+    if (!e.target.closest('#assist-gg') || ggSent) return;
+    ggSent = sendGG();
+    if (!ggSent) $('assist-gg').textContent = "couldn't send";
+    else renderMoves();
+  });
   fitBody();
   window.addEventListener('resize', fitBody);
 

@@ -36,7 +36,7 @@ function chip(kind, id, label, state, { next = false, odds = null } = {}) {
 }
 
 /** The HTML for the block. `read` is what readOpponent() returns. */
-export function renderOpponent(read, dex) {
+export function renderOpponent(read, dex, { moves: showMoves = true } = {}) {
   if (!read) return '';
   const moveName = (id) => dex.move(id)?.name ?? id;
   const pretty = (name) => dex.names?.abilities?.[toId(name)] ?? name;
@@ -79,8 +79,9 @@ export function renderOpponent(read, dex) {
     <div class="r"><span>Speed</span><b class="${read.scarfProven ? 'proven' : ''}">${esc(read.speed ?? 'unknown')}</b></div>
     <div class="chips"><span class="lbl">Item</span>${items.join('')}</div>
     <div class="chips"><span class="lbl">Ability</span>${abilities.join('')}</div>
-    <div class="chips"><span class="lbl">Moves</span>${moves.join('')}</div>
-    <div class="hint">tap to confirm · tap a move again: they use it next turn · again: undo</div>`;
+    ${showMoves ? `<div class="chips"><span class="lbl">Moves</span>${moves.join('')}</div>` : ''}
+    <div class="hint">${showMoves ? 'tap to confirm · tap a move again: they use it next turn · again: undo'
+      : 'tap to confirm · their moves are in the row above the bar'}</div>`;
 }
 
 /**

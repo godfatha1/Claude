@@ -373,6 +373,19 @@ const out = await page.evaluate(async () => {
     res.failure = { failed: r?.failed === true, error: r?.error, afterRecover: engine.search(worlds(fresh())[0], 800).ours.length };
   }
 
+  // ---- 20. Positions that used to crash the engine a few turns down the tree.
+  {
+    res.crashes = [];
+    for (const name of ['encore-crash-1', 'encore-crash-2']) {
+      const { world } = await (await fetch(`/tests/js/fixtures/${name}.json`)).json();
+      let ok = true, error = null;
+      for (let i = 0; i < 6 && ok; i++) {
+        try { engine.search(world, 25000); } catch (e) { ok = false; error = String(e.message ?? e); await engine.recover(); }
+      }
+      res.crashes.push({ name, ok, error });
+    }
+  }
+
   // ---- 18. Tera Blast with Tera into a Ghost isn't a Normal move into an immunity.
   {
     const b = fresh();
@@ -493,6 +506,9 @@ check('the call lasts one turn', cl.clearedByTurn === true);
 check('a move they can\'t use isn\'t pinned', cl.lockedPinned === false);
 
 const il = out.illusion;
+check('positions that used to crash the engine search cleanly at deep',
+  out.crashes.every((c) => c.ok), JSON.stringify(out.crashes));
+
 const fm = out.formes;
 check('Eiscue losing its Ice Face gets the Noice face\'s Speed', fm.before < fm.after, `${fm.before} -> ${fm.after}`);
 check('…and outspeeding that turn isn\'t read as a Scarf', fm.scarf === false);
