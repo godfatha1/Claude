@@ -15,7 +15,7 @@ use std::time::Duration;
 use poke_engine::choices::{Choice, Choices, MOVES};
 use poke_engine::engine::abilities::Abilities;
 use poke_engine::engine::items::Items;
-use poke_engine::engine::generate_instructions::calculate_both_damage_rolls;
+use poke_engine::engine::generate_instructions::{calculate_both_damage_rolls, MAX_SLEEP_TURNS};
 use poke_engine::engine::state::MoveChoice;
 use poke_engine::mcts::{perform_mcts, MctsSideResult};
 use poke_engine::pokemon::PokemonName;
@@ -104,6 +104,9 @@ struct InSide {
     /// that move (with or without Tera) for them at the first turn, which makes
     /// our ranking the best answer to it. Ignored if the move isn't legal.
     root_move: String,
+    /// Showdown asked this side to pick a replacement: after U-turn, Volt
+    /// Switch, Flip Turn or a faint. Without it the engine offers moves.
+    force_switch: bool,
 }
 
 #[derive(Deserialize, Default)]
@@ -269,8 +272,10 @@ fn build_mon(m: &InMon) -> Result<Pokemon, String> {
         special_defense: stat(4, 100),
         speed: stat(5, 100),
         status,
-        rest_turns: m.rest_turns,
-        sleep_turns: m.sleep_turns,
+        // The engine's wake-up chance is 1 / (1 + max - turns): past the max
+        // it divides by zero and the search crashes. Keep both in range.
+        rest_turns: m.rest_turns.clamp(0, 3),
+        sleep_turns: m.sleep_turns.clamp(0, MAX_SLEEP_TURNS),
         weight_kg: m.weight,
         terastallized: m.terastallized,
         tera_type: if m.tera_type.is_empty() {
@@ -350,6 +355,7 @@ fn build_side(s: &InSide) -> Result<Side, String> {
     };
     side.substitute_health = s.substitute_health;
     side.force_trapped = s.force_trapped;
+    side.force_switch = s.force_switch;
 
     // The last move used, as the engine's index into the active's moveset.
     // Encore needs it to know which move is locked in.

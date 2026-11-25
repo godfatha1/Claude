@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.6
+**Version:** 0.7.7
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -270,6 +270,37 @@ wasn't being handed over:
   at a time never would.
 - The private-feed handling moved from the panel into `Battle.applyRequest`
   so the tests replay exactly what the panel does.
+
+## Is the advice any good? (checked 2026-11-24)
+
+`tests/js/check_advisor_strength.mjs` lets the advisor play real games on a
+local server against a random clicker and a max-damage clicker, and checks
+three positions with an obvious answer. Over about 120 games at quick/normal
+it won nearly all of them against random and the large majority against
+greedy. So the search itself works.
+
+What that run found were five bugs in what the panel told the engine, each
+of which made the advice wrong or empty in a specific spot:
+
+1. **After U-turn, Volt Switch or Flip Turn** the engine wasn't told a
+   replacement was needed, so it recommended another move.
+2. **After a locked-in Pokémon (Outrage, Petal Dance) or a trapped one
+   fainted**, "trapped" carried over from the previous request, the engine
+   removed every switch, and the call was "No Move".
+3. **After Hyper Beam or Giga Impact** "must recharge" was never cleared, so
+   every later call for that Pokémon was "No Move".
+4. **Sleep was counted every turn instead of every attempt**, and at four the
+   engine's wake-up chance divided by zero and the search crashed (a new
+   fixture, `sleep-crash-1`). Now counted from `|cant|...|slp` and Sleep Talk,
+   and clamped in the wrapper.
+5. Three of the tests (state reader, crash hunt, strength) took `|tier|`, the
+   line every game opens with, for `|tie`, and stopped after ~10 turns. The
+   crash hunt had only ever seen early game; whole games found bug 4.
+
+**Why the percentages look low.** The number is how much of the search went
+to that option, not a chance of winning. With four moves, four "move + Tera"
+versions and five switches, an obvious move like a 4x Ice Beam lands around
+40%; the median top option across these games was 34–43%.
 
 `tests/js/check_facts_reach_engine.mjs` proves each one arrives and changes the
 legal options (an Encore leaves one move; trapped removes every switch; Tera

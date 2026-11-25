@@ -41,6 +41,10 @@ if curl -sS --max-time 4 -o /dev/null "http://localhost:8111/" 2>/dev/null; then
   echo
   echo "=== the engine survives every position real games produce ==="
   node tests/js/check_engine_never_crashes.mjs "${CRASH_GAMES:-10}" || fail=1
+
+  echo
+  echo "=== the advice wins games (vs random and vs greedy clickers) ==="
+  GAMES="${STRENGTH_GAMES:-4}" BUDGET="${STRENGTH_BUDGET:-quick}" node tests/js/check_advisor_strength.mjs || fail=1
 else
   echo "  skipped — no Showdown server on :8111"
   echo "  start one with: scripts/local_server.sh"

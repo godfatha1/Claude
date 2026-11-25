@@ -88,7 +88,8 @@ async function playOne(index) {
   a.listeners.push(play(a)); b.listeners.push(play(b));
 
   for (let i = 0; i < 600; i++) {
-    if (a.lines.some((x) => x.room === room && /^\|(win|tie)\|?/.test(x.line))) break;
+    // Exactly |win|... or |tie — not |tier|, which every game opens with.
+    if (a.lines.some((x) => x.room === room && /^\|(win\||tie$|tie\|)/.test(x.line))) break;
     await sleep(100);
   }
   a.ws.close(); b.ws.close();

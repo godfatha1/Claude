@@ -164,7 +164,8 @@ async function playOneGame(index) {
 
   // Wait for the game to finish, or give up.
   while (guard++ < 400) {
-    if (spectated.some((l) => l.startsWith('|win|') || l.startsWith('|tie'))) break;
+    // |tie exactly, not |tier| — every game opens with that line.
+    if (spectated.some((l) => l.startsWith('|win|') || l === '|tie' || l.startsWith('|tie|'))) break;
     await sleep(150);
   }
 

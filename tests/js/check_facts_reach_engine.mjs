@@ -376,7 +376,7 @@ const out = await page.evaluate(async () => {
   // ---- 20. Positions that used to crash the engine a few turns down the tree.
   {
     res.crashes = [];
-    for (const name of ['encore-crash-1', 'encore-crash-2']) {
+    for (const name of ['encore-crash-1', 'encore-crash-2', 'sleep-crash-1']) {
       const { world } = await (await fetch(`/tests/js/fixtures/${name}.json`)).json();
       let ok = true, error = null;
       for (let i = 0; i < 6 && ok; i++) {

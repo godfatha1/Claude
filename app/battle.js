@@ -445,6 +445,8 @@ class TrackedSide {
     this.lastAction = null;
     /** Showdown said our active can Tera right now, and into what (our side only). */
     this.canTera = null;
+    /** Showdown wants a replacement picked now: after a pivot move or a faint (our side only). */
+    this.forceSwitch = false;
     /**
      * What the active looked like when it came in, and what it's been
      * credited with since. Illusion is why: Zoroark arrives looking like a
@@ -831,10 +833,8 @@ export class Battle {
         if (left <= 1) { mon.volatileTurns.delete(name); mon.volatiles.delete(name); }
         else mon.volatileTurns.set(name, left - 1);
       }
-      if (mon.status === 'slp') {
-        mon.sleepTurns += 1;
-        if (mon.restTurns > 0) mon.restTurns -= 1;
-      }
+      // Sleep is counted where it's spent: each turn it tries to move and
+      // can't (onCant), not every turn it sits there.
     }
 
     // Snapshot speeds as they are at the start of the turn. Anything that
@@ -888,6 +888,7 @@ export class Battle {
     mon.requestDisabled.clear();
     side.lastAction = 'switch';
     side.trapped = false;
+    side.forceSwitch = false;
 
     if (hp) this.applyHp(mon, hp);
     if (cmd === 'switch') side.conditions.toxicCount = 0;
@@ -1025,7 +1026,13 @@ export class Battle {
 
     mon.lastMove = id;
     if (side) side.lastAction = id;
+    mon.volatiles.delete('mustrecharge'); // it moved, so it isn't recharging
     if (id === 'rest') { mon.restTurns = 2; mon.sleepTurns = 0; }
+    // Sleep Talk is a turn spent asleep too.
+    else if (id === 'sleeptalk' && mon.status === 'slp') {
+      mon.sleepTurns += 1;
+      if (mon.restTurns > 0) mon.restTurns -= 1;
+    }
 
     // Truant: having just moved, it loafs next turn. Showdown keeps this as a
     // silent volatile that never shows in the log, so it has to be inferred
@@ -1045,6 +1052,18 @@ export class Battle {
   onCant([ref, reason]) {
     const { mon } = this.resolve(ref);
     if (!mon) return false;
+    // A turn of sleep spent trying to move. This is the count the engine's
+    // wake-up chance runs on; counting every turn instead overshot it, and at
+    // four the engine divided by zero and the search crashed.
+    if (/^slp$/i.test(String(reason ?? ''))) {
+      mon.sleepTurns += 1;
+      if (mon.restTurns > 0) mon.restTurns -= 1;
+      return true;
+    }
+    // The recharge turn after Hyper Beam or Giga Impact has now been spent.
+    // Left in place, the engine thought it had to recharge every turn after,
+    // and the only advice it could give was "No Move".
+    if (/^recharge$/i.test(String(reason ?? ''))) { mon.volatiles.delete('mustrecharge'); return true; }
     if (/^ability:\s*truant$/i.test(String(reason ?? ''))) {
       mon.ability = 'Truant';
       mon.volatiles.delete('truant');
@@ -1460,6 +1479,13 @@ export class Battle {
     if (slot && this.sides[slot]) this.ourSlot = slot;
 
     const ours = this.us;
+    // A U-turn, Volt Switch, Flip Turn or a faint: pick who comes in, not a move.
+    ours.forceSwitch = Boolean(request.forceSwitch?.[0]);
+    // "Trapped" belongs to the request it came in, and a pick-a-replacement
+    // request doesn't repeat it. Carried over, it told the engine a Pokémon
+    // that had just fainted out of an Outrage lock still couldn't switch, so
+    // the only option left was "No Move".
+    ours.trapped = Boolean(request.active?.[0]?.trapped);
     for (const entry of request.side.pokemon) {
       const details = entry.details || '';
       const species = details.split(',')[0].trim();
@@ -1498,7 +1524,6 @@ export class Battle {
         const id = m.id ?? toId(m.move);
         if (id && typeof m.pp === 'number') mon.pp.set(id, m.pp);
       }
-      ours.trapped = Boolean(active.trapped);
       ours.canTera = active.canTerastallize || null;
     }
     return true;
@@ -1523,6 +1548,7 @@ export class Battle {
       substituteHealth,
       lastUsedMove: side.lastAction === 'switch' ? 'switch' : (mon?.lastMove ?? ''),
       forceTrapped: Boolean(side.trapped),
+      forceSwitch: Boolean(side.forceSwitch),
     };
   }
 

@@ -251,6 +251,10 @@ const cap = (s) => String(s).replace(/^(.)/, (c) => c.toUpperCase());
 
 function label(choice, action = null) {
   if (action?.unnamedSwitch) return 'Switch out';
+  // The engine's word for "there's only one thing you can do".
+  if (choice === 'No Move') {
+    return battle?.us?.active?.volatiles.has('mustrecharge') ? 'Recharge (no choice this turn)' : 'No choice this turn';
+  }
   if (choice.startsWith('switch ')) {
     const name = choice.slice(7);
     return `Switch to ${dex.get(name)?.n ?? name}`;
