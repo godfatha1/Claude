@@ -9,7 +9,7 @@
 // can't reach Showdown. It connects to a local Showdown server and plays a real
 // game, which is what the panel actually reads.
 import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, rmSync, readdirSync, readFileSync, existsSync } from 'node:fs';
 import { chromium } from 'playwright';
 import WebSocket from 'ws';
 
@@ -95,7 +95,12 @@ sys.argv = ['serve.py', '--port', '${MIRROR_PORT}', '--quiet']
 exec(compile(src, 'serve.py', 'exec'),
      {'__name__': '__main__', '__file__': '${process.cwd()}/serve.py'})
 `);
-const mirror = spawn('python3', ['/tmp/fakeclient/run_mirror.py'], { stdio: 'ignore' });
+// Games are saved by the server; point it at a fresh folder for this run.
+const GAMES = '/tmp/fakeclient/games';
+rmSync(GAMES, { recursive: true, force: true });
+const mirror = spawn('python3', ['/tmp/fakeclient/run_mirror.py'], {
+  stdio: 'ignore', env: { ...process.env, RANDBATS_GAMES: GAMES, RANDBATS_UPLOAD_CONF: '/nonexistent' },
+});
 
 const stop = () => { try { fake.kill(); mirror.kill(); } catch { /* gone */ } };
 process.on('exit', stop);
@@ -306,6 +311,28 @@ try {
   check('the bar says who won, not a stale move', / won/.test(bar), bar);
   const leftover = await page.evaluate(() => document.querySelectorAll('#assist-opts li').length);
   check("last turn's options are cleared", leftover === 0, `${leftover} left`);
+
+  // The whole game, saved on the server once it's over.
+  let saved = null;
+  for (let i = 0; i < 20 && !saved?.final; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    const days = existsSync(GAMES) ? readdirSync(GAMES) : [];
+    for (const day of days) for (const f of readdirSync(`${GAMES}/${day}`)) {
+      if (f === `${foeRoom}.json`) saved = JSON.parse(readFileSync(`${GAMES}/${day}/${f}`, 'utf8'));
+    }
+  }
+  check('the finished game is saved on the phone', saved?.final === true, saved ? `final=${saved.final}` : 'no file');
+  if (saved) {
+    const requests = saved.lines.filter((l) => l.startsWith('|request|')).length;
+    const calls = saved.advice.filter((a) => a.actions?.length).length;
+    check('…with the whole log, our private feed included', saved.lines.length > 30 && requests > 0
+      && saved.lines.some((l) => l.startsWith('|win|')), `${saved.lines.length} lines, ${requests} requests`);
+    check('…every recommendation it showed, and where', calls > 0
+      && saved.advice.every((a) => a.at > 0 && a.at <= saved.lines.length), `${calls} calls`);
+    check('…and who played and who won', saved.us === `Player${RUN}` && saved.winner === `Player${RUN}`,
+      `${saved.us} / ${saved.winner}`);
+    console.log(`         ${saved.lines.length} lines, ${calls} recommendations, ${saved.taps.length} taps, version ${saved.version}`);
+  }
 } catch (err) {
   check('a gg button shows when the game ends', false, `${err.message} — bar: "${await page.textContent('#assist-call')}"`);
 }

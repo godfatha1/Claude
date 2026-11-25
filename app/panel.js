@@ -15,6 +15,7 @@ import { Advisor, moveIdOf, isTeraChoice } from './advisor.js';
 import { readOpponent, sampleWorlds } from './infer.js';
 import { renderOpponent, applyTap } from './opponent-ui.js';
 import { readChat, RivalMoves } from './chat.js';
+import { GameRecorder } from './recorder.js';
 import { toId } from './data.js';
 
 const BASE = new URL('.', import.meta.url).href;
@@ -94,6 +95,9 @@ let budget = 'deep', thinking = false, dirty = false;
 let threat = null;
 /** We're a player in this battle (we've had a request), so gg can be said. */
 let weArePlaying = false, ggSent = false;
+/** The game being recorded, and the version that recorded it. */
+let recorder = null, appVersion = null;
+const GAMES_ENDPOINT = new URL('../games/save', BASE).href;
 /** The Tera box: advice and damage as if we Tera this turn. */
 let teraNow = false;
 /** Chat for the strip above the bar: the opponent's lines, and everyone else's. */
@@ -144,8 +148,10 @@ function handleChunk(chunk) {
 
     // Start following a battle when one begins.
     if (currentRoom?.startsWith('battle-') && raw.startsWith('|init|battle')) {
+      if (recorder && !recorder.record.final) recorder.save(); // a game left unfinished
       room = currentRoom;
       battle = new Battle(dex);
+      recorder = new GameRecorder({ room, version: appVersion, endpoint: GAMES_ENDPOINT });
       ourName = ourName ?? findOurName();
       chatThem = []; chatAll = [];
       rivalMoves = new RivalMoves(); lastRivalMove = '';
@@ -155,6 +161,7 @@ function handleChunk(chunk) {
       continue;
     }
     if (!battle || currentRoom !== room) continue;
+    recorder?.line(raw);
 
     // Read before the battle applies the line, so our HP before the hit is known.
     const moved = rivalMoves.read(raw, battle);
@@ -181,6 +188,21 @@ function handleChunk(chunk) {
     if (raw.startsWith('|request|')) applyOwnTeam(raw);
 
     if (changed) { render(); if (raw.startsWith('|turn|')) queueThink(); }
+
+    if (recorder) {
+      // Save as it goes, so a closed tab still leaves most of the game.
+      if (raw.startsWith('|turn|') && battle.turn - recorder.sentTurn >= 5) {
+        recorder.sentTurn = battle.turn;
+        recorder.sync(battle, ourName);
+        recorder.save();
+      }
+      // The final save waits a moment for the ladder's rating line.
+      if ((raw.startsWith('|win|') || raw === '|tie' || raw.startsWith('|tie|')) && !recorder.finishing) {
+        recorder.finishing = true;
+        const r = recorder;
+        setTimeout(() => { r.sync(battle, ourName); r.save({ final: true }); }, 4000);
+      }
+    }
   }
   room = currentRoom?.startsWith('battle-') ? currentRoom : room;
 }
@@ -234,6 +256,7 @@ function think() {
       if (battle.ended) { showEnd(); return; }
       showDamage();
       const result = advisor.advise(battle, { budget, teraNow });
+      recorder?.advice(battle, result, { budget, teraNow });
       if (result?.failed) searchFailed(result.error);
       else if (result) show(result);
     } catch (err) {
@@ -530,7 +553,15 @@ async function start() {
     $(id).addEventListener('click', (e) => {
       e.stopPropagation();
       if (!battle?.them?.active) return;
-      if (applyTap(e.target, battle.them.active)) { render(); queueThink(); }
+      const tapped = e.target.closest?.('[data-kind][data-id]');
+      if (applyTap(e.target, battle.them.active)) {
+        const mon = battle.them.active;
+        const { kind, id } = tapped.dataset;
+        recorder?.tap(battle, kind, id, kind === 'move'
+          ? (mon.nextMove === id ? 'next' : mon.confirmed.moves.has(id) ? 'sure' : 'cleared')
+          : (kind === 'item' ? (mon.confirmed.item ? 'sure' : 'cleared') : (mon.confirmed.ability ? 'sure' : 'cleared')));
+        render(); queueThink();
+      }
     });
   }
   // The gg button, once the game's over.
@@ -542,6 +573,8 @@ async function start() {
   });
   fitBody();
   window.addEventListener('resize', fitBody);
+  // Closing the tab mid-game: send what there is.
+  window.addEventListener('pagehide', () => { if (recorder && !recorder.record.final) { recorder.sync(battle, ourName); recorder.beacon(); } });
 
   // The Tera box: everything below it is recomputed as if you click Tera.
   $('assist-tera').addEventListener('change', (e) => {
@@ -571,7 +604,7 @@ async function start() {
     // Which version this phone is running, so you can tell an update landed.
     fetch(new URL('../VERSION', BASE).href, { cache: 'no-store' })
       .then((r) => (r.ok ? r.text() : ''))
-      .then((v) => { if (v.trim()) $('assist-ver').textContent = `v${v.trim()}`; })
+      .then((v) => { if (v.trim()) { appVersion = v.trim(); $('assist-ver').textContent = `v${appVersion}`; } })
       .catch(() => {});
     window.__assist = { get battle() { return battle; }, dex, engine, advisor,
                         get teraNow() { return teraNow; },

@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.7
+**Version:** 0.7.8
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -270,6 +270,26 @@ wasn't being handed over:
   at a time never would.
 - The private-feed handling moved from the panel into `Battle.applyRequest`
   so the tests replay exactly what the panel does.
+
+## Saved games (from 0.7.8)
+
+Until 0.7.8 no game was saved anywhere; the panel only held the current one
+in memory. Now `app/recorder.js` records every game: the battle room's lines
+from your own feed (requests included), each recommendation shown (top ten
+options with share, average and worst/best-set value, and `at`, the line it
+was made after), and your taps. The panel posts it to `serve.py`
+(`/_assist/games/save`) every five turns and once more after the result and
+rating land; closing the tab sends what there is. The server keeps games in
+`~/.local/share/randbats/games/<day>/<room>.json` (outside the checkout, so
+updates and resets never touch them) and lists them at `/_assist/games`.
+
+With `~/.config/randbats/upload.json` (`repo`, `token`, `branch`) each
+finished game is also PUT to that GitHub repository under `games/`, retried
+until it goes through. The repo must be private: games carry player names.
+
+`scripts/review_game.mjs` replays saved games through the current advisor:
+for each call, what it said then, what you clicked, what it says now. That's
+the loop for improving the advice on real games.
 
 ## Is the advice any good? (checked 2026-11-24)
 

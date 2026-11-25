@@ -34,8 +34,11 @@ Options: --port (default 8137), --host (default 127.0.0.1).
 from __future__ import annotations
 
 import argparse
+import base64
 import gzip
+import html
 import io
+import json
 import os
 import re
 import subprocess
@@ -56,6 +59,120 @@ ROOT = Path(__file__).resolve().parent
 OURS = "/_assist/"
 
 DEFAULT_PORT = 8137
+
+# ------------------------------------------------------------- saved games
+#
+# The panel records every game (the battle log from your own feed, each
+# recommendation it showed, what you tapped) and posts it here. Games are kept
+# outside the app's folder so updates, which reset that folder, never touch
+# them. If ~/.config/randbats/upload.json exists ({"repo": "owner/name",
+# "token": "...", "branch": "main"}), each finished game is also copied to that
+# GitHub repository, where it can be read to improve the advice. Keep that
+# repository private: games carry player names.
+
+MAX_GAME_BYTES = 4_000_000
+GAME_ROOM = re.compile(r"battle-[a-z0-9-]+")
+GAME_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def games_dir() -> Path:
+    return Path(os.environ.get("RANDBATS_GAMES") or Path.home() / ".local/share/randbats/games")
+
+
+def upload_conf() -> dict | None:
+    path = Path(os.environ.get("RANDBATS_UPLOAD_CONF") or Path.home() / ".config/randbats/upload.json")
+    try:
+        conf = json.loads(path.read_text())
+        return conf if conf.get("repo") and conf.get("token") else None
+    except (OSError, ValueError):
+        return None
+
+
+def save_game(raw: bytes) -> tuple[int, str]:
+    """Store one game record. Returns (status, message)."""
+    try:
+        record = json.loads(raw)
+    except ValueError:
+        return 400, "not JSON"
+    room = str(record.get("room") or "")
+    if not GAME_ROOM.fullmatch(room):
+        return 400, "no battle room"
+    day = str(record.get("started") or "")[:10]
+    if not GAME_DAY.fullmatch(day):
+        day = time.strftime("%Y-%m-%d")
+    folder = games_dir() / day
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{room}.json"
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_bytes(raw)
+    tmp.replace(path)  # never a half-written file
+    if record.get("final"):
+        path.with_suffix(".pending").write_text("")
+        threading.Thread(target=upload_pending, daemon=True).start()
+    return 204, "saved"
+
+
+def upload_pending() -> None:
+    """Copy finished games to the GitHub repo, if one is set up. Retried later on failure."""
+    conf = upload_conf()
+    if not conf:
+        return
+    api = os.environ.get("RANDBATS_GITHUB_API", "https://api.github.com")
+    branch = conf.get("branch", "main")
+    headers = {"Authorization": f"Bearer {conf['token']}", "Accept": "application/vnd.github+json",
+               "User-Agent": "randbats-assistant", "Content-Type": "application/json"}
+    for marker in sorted(games_dir().glob("*/*.pending")):
+        game = marker.with_suffix(".json")
+        if not game.is_file():
+            marker.unlink(missing_ok=True)
+            continue
+        rel = f"games/{game.parent.name}/{game.name}"
+        url = f"{api}/repos/{conf['repo']}/contents/{urllib.parse.quote(rel)}"
+        try:
+            sha = None
+            try:
+                req = urllib.request.Request(f"{url}?ref={urllib.parse.quote(branch)}", headers=headers)
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    sha = json.loads(r.read()).get("sha")
+            except urllib.error.HTTPError as err:
+                if err.code != 404:
+                    raise
+            body = {"message": f"game {game.stem}", "branch": branch,
+                    "content": base64.b64encode(game.read_bytes()).decode()}
+            if sha:
+                body["sha"] = sha
+            req = urllib.request.Request(url, data=json.dumps(body).encode(), headers=headers, method="PUT")
+            with urllib.request.urlopen(req, timeout=60):
+                pass
+            marker.unlink(missing_ok=True)
+            sys.stderr.write(f"uploaded {rel}\n")
+        except (urllib.error.URLError, OSError, ValueError) as err:
+            sys.stderr.write(f"upload of {rel} failed, will retry: {err}\n")
+            return  # offline or refused: leave the rest for next time
+
+
+def games_page() -> bytes:
+    """A plain list of saved games, newest first, for opening on the phone."""
+    rows = []
+    uploading = upload_conf() is not None
+    for game in sorted(games_dir().glob("*/*.json"), reverse=True)[:300]:
+        try:
+            record = json.loads(game.read_text())
+        except (OSError, ValueError):
+            continue
+        rating = record.get("rating") or {}
+        result = ("won" if record.get("winner") == record.get("us") else "lost") if record.get("winner") else "unfinished"
+        delta = f" ({rating['after'] - rating['before']:+d})" if rating.get("after") is not None else ""
+        pending = " · not uploaded yet" if uploading and game.with_suffix(".pending").exists() else ""
+        rel = f"{game.parent.name}/{game.name}"
+        rows.append(f'<li><a href="{OURS}games/{html.escape(rel)}">{html.escape(game.parent.name)} · '
+                    f'{html.escape(str(record.get("them") or "?"))}</a> · {result}{delta} · '
+                    f'{len(record.get("advice") or [])} calls{pending}</li>')
+    body = ("<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
+            "<title>Saved games</title><style>body{font:15px system-ui;margin:16px}li{margin:6px 0}</style>"
+            f"<h1>Saved games</h1><p>Kept in {html.escape(str(games_dir()))}.</p>"
+            f"<ul>{''.join(rows) or '<li>none yet</li>'}</ul>")
+    return body.encode()
 
 # Headers that are ours to decide, not theirs to pass on.
 DROP_FROM_UPSTREAM = {
@@ -361,6 +478,9 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlparse(self.path).path
         if path == "/" and method == "GET" and self.self_update_branch:
             maybe_update(self.self_update_branch, CHECK_ON_OPEN_AFTER)
+        if path.startswith(OURS + "games"):
+            self.games(method, path)
+            return
         if path.startswith(OURS):
             if method in ("GET", "HEAD"):
                 self.serve_ours(path)
@@ -368,6 +488,45 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(405, "not allowed here")
             return
         self.mirror(method)
+
+    def games(self, method: str, path: str) -> None:
+        """Saving, listing and reading back recorded games."""
+        rest = path[len(OURS + "games"):].strip("/")
+        if method == "POST" and rest == "save":
+            length = int(self.headers.get("Content-Length") or 0)
+            if length <= 0 or length > MAX_GAME_BYTES:
+                self.send_error(413, "game too large or empty")
+                return
+            status, message = save_game(self.rfile.read(length))
+            if status == 204:
+                self.send_response(204)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+            else:
+                self.send_error(status, message)
+            return
+        if method not in ("GET", "HEAD"):
+            self.send_error(405, "not allowed here")
+            return
+        if rest == "":
+            body, kind = games_page(), "text/html; charset=utf-8"
+        else:
+            parts = rest.split("/")
+            if len(parts) != 2 or not GAME_DAY.fullmatch(parts[0]) or not GAME_ROOM.fullmatch(parts[1].removesuffix(".json")):
+                self.send_error(404, "not found")
+                return
+            game = games_dir() / parts[0] / parts[1]
+            if not game.is_file():
+                self.send_error(404, "not found")
+                return
+            body, kind = game.read_bytes(), "application/json"
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        if method == "GET":
+            self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802
         self.route("GET")
@@ -417,6 +576,8 @@ def main() -> int:
     if branch:
         print(f"  keeping itself current with {branch} (every {CHECK_EVERY // 60} min and on open)")
         keep_updated(branch)
+    print(f"  saving games to {games_dir()}" + (" and uploading finished ones" if upload_conf() else ""))
+    threading.Thread(target=upload_pending, daemon=True).start()  # anything left from last time
     try:
         server.serve_forever()
     except KeyboardInterrupt:
