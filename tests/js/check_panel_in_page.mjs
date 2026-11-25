@@ -99,7 +99,7 @@ exec(compile(src, 'serve.py', 'exec'),
 const GAMES = '/tmp/fakeclient/games';
 rmSync(GAMES, { recursive: true, force: true });
 const mirror = spawn('python3', ['/tmp/fakeclient/run_mirror.py'], {
-  stdio: 'ignore', env: { ...process.env, RANDBATS_GAMES: GAMES, RANDBATS_UPLOAD_CONF: '/nonexistent' },
+  stdio: 'ignore', env: { ...process.env, RANDBATS_GAMES: GAMES },
 });
 
 const stop = () => { try { fake.kill(); mirror.kill(); } catch { /* gone */ } };

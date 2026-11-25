@@ -3,7 +3,7 @@
 Kept current so work can resume after a context reset without re-deriving
 anything. If you're picking this up cold, read this file then `docs/research.md`.
 
-**Version:** 0.7.8
+**Version:** 0.7.9
 **Branch:** `claude/pokemon-showdown-assistant-3xna06`
 **Last updated:** 2026-10-30
 **Dashboard:** https://claude.ai/artifact/8pWEDEB4TewZaaZkbYvaAz
@@ -283,9 +283,10 @@ rating land; closing the tab sends what there is. The server keeps games in
 `~/.local/share/randbats/games/<day>/<room>.json` (outside the checkout, so
 updates and resets never touch them) and lists them at `/_assist/games`.
 
-With `~/.config/randbats/upload.json` (`repo`, `token`, `branch`) each
-finished game is also PUT to that GitHub repository under `games/`, retried
-until it goes through. The repo must be private: games carry player names.
+Games stay on the phone; nothing is uploaded (you asked for phone only). To
+read them from elsewhere: the list is at `/_assist/games` and each file at
+`/_assist/games/<day>/<room>.json`, so anything that can reach the phone's
+server can fetch them.
 
 `scripts/review_game.mjs` replays saved games through the current advisor:
 for each call, what it said then, what you clicked, what it says now. That's

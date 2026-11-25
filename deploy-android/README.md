@@ -28,18 +28,7 @@ it), and anything you tapped. They're kept in `~/.local/share/randbats/games/`,
 outside the app's folder so updates never touch them. Open
 **http://127.0.0.1:8137/_assist/games** on the phone to see the list.
 
-To have each finished game copied somewhere they can be used to improve the
-advice, make a **private** GitHub repository for them (games carry player
-names), and a fine-grained token that can only write that one repository
-(Contents: read and write). Then on the phone, put this in
-`~/.config/randbats/upload.json` and `chmod 600` it:
-
-```json
-{"repo": "<you>/randbats-games", "token": "<the token>", "branch": "main"}
-```
-
-Games saved before this was set up are uploaded too, the next time the server
-starts or saves a game. To go over them turn by turn (what it said then, what
+They stay on the phone; nothing is sent anywhere. To go over them turn by turn (what it said then, what
 you clicked, what the current version says now):
 `node scripts/review_game.mjs <folder of games>`.
 
